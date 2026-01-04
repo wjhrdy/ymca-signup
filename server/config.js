@@ -16,13 +16,13 @@ function loadConfig() {
     } else if (fs.existsSync(rootConfigPath)) {
       console.log('Loading config from root directory');
     } else {
-      const examplePath = path.join(__dirname, '../data/config.yaml.example');
+      const examplePath = path.join(__dirname, '../config.yaml.example');
       if (fs.existsSync(examplePath)) {
         fs.copyFileSync(examplePath, dataConfigPath);
         configPath = dataConfigPath;
         console.log('Created config.yaml from config.yaml.example in data directory');
       } else {
-        throw new Error('No config file found');
+        throw new Error('No config file found. Please copy config.yaml.example to data/config.yaml');
       }
     }
     
