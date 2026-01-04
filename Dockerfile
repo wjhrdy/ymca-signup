@@ -32,7 +32,8 @@ RUN npm run build
 
 WORKDIR /app
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data && \
+    cp config.yaml.example /app/data/config.yaml.example
 
 EXPOSE 3001
 

@@ -6,7 +6,26 @@ let config = null;
 
 function loadConfig() {
   try {
-    const configPath = path.join(__dirname, '../config.yaml');
+    const dataConfigPath = path.join(__dirname, '../data/config.yaml');
+    const rootConfigPath = path.join(__dirname, '../config.yaml');
+    
+    let configPath = rootConfigPath;
+    if (fs.existsSync(dataConfigPath)) {
+      configPath = dataConfigPath;
+      console.log('Loading config from data directory');
+    } else if (fs.existsSync(rootConfigPath)) {
+      console.log('Loading config from root directory');
+    } else {
+      const examplePath = path.join(__dirname, '../data/config.yaml.example');
+      if (fs.existsSync(examplePath)) {
+        fs.copyFileSync(examplePath, dataConfigPath);
+        configPath = dataConfigPath;
+        console.log('Created config.yaml from config.yaml.example in data directory');
+      } else {
+        throw new Error('No config file found');
+      }
+    }
+    
     const fileContents = fs.readFileSync(configPath, 'utf8');
     config = yaml.load(fileContents);
     console.log('Configuration loaded successfully');

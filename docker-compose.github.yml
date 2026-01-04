@@ -1,0 +1,26 @@
+services:
+  ymca-signup:
+    build:
+      context: https://github.com/wjhrdy/ymca-signup.git#main
+      # For a specific commit (recommended for production):
+      # context: https://github.com/wjhrdy/ymca-signup.git#FULL_GIT_COMMIT_HASH
+      # Example with commit hash:
+      # context: https://github.com/wjhrdy/ymca-signup.git#a8dd5996f85eb78d60aeb1961c3eda563190c29e
+    container_name: ymca-signup
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    env_file:
+      - .env
+    volumes:
+      - /mnt/user/appdata/ymca-signup:/app/data
+    restart: unless-stopped
+    security_opt:
+      - seccomp=unconfined
+    cap_add:
+      - SYS_ADMIN
