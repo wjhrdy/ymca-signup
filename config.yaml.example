@@ -1,0 +1,30 @@
+# YMCA Auto-Signup Configuration
+
+# Your YMCA client ID (required for accurate enrollment detection)
+# Run: node debug-browser.js and check the captured API requests to find your client_id
+# Look for requests with "client_id" in the URL parameters
+clientId: 8084
+
+# Preferred YMCA locations to fetch classes from
+# To find location IDs, run: node get-locations.js
+# Leave empty array [] to fetch from all locations
+preferredLocations:
+  - 15  # Alexander Family YMCA
+  - 24  # Poyner YMCA
+  - 25  # Southeast Raleigh YMCA
+
+# Scheduler settings
+scheduler:
+  # How often to check for classes to auto-signup (in minutes)
+  checkIntervalMinutes: 5
+  
+  # Default hours before class to attempt signup
+  defaultSignupHoursBefore: 46
+
+# Class fetch settings
+classFetch:
+  # Default number of days to fetch ahead
+  defaultDaysAhead: 7
+  
+  # Maximum number of classes to process at once
+  maxClassesPerFetch: 5000
