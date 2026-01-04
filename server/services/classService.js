@@ -38,35 +38,21 @@ async function getUserClientId(sessionCookie) {
     return cachedClientId;
   }
   
-  // Try to get from database first
+  // Get from database (auto-populated during login)
   try {
     const dbClientId = await db.getClientId();
     if (dbClientId) {
       cachedClientId = dbClientId;
-      console.log(`Using cached client_id: ${cachedClientId}`);
+      console.log(`Using auto-detected client_id: ${cachedClientId}`);
       return cachedClientId;
     }
   } catch (error) {
     console.warn('Could not read client_id from database:', error.message);
   }
   
-  // Fallback to config
-  const configClientId = config.getClientId();
-  if (configClientId) {
-    cachedClientId = configClientId;
-    console.log(`Using client_id from config: ${cachedClientId}`);
-    // Save it to database for future use
-    try {
-      await db.saveClientId(configClientId);
-    } catch (error) {
-      console.warn('Could not save client_id to database:', error.message);
-    }
-    return cachedClientId;
-  }
-  
-  console.warn('⚠️  No client_id configured');
+  console.warn('⚠️  No client_id found');
+  console.warn('   Client ID is auto-detected during login');
   console.warn('   Enrollment detection will be inaccurate without it');
-  console.warn('   Add clientId to config.yaml or run: node setup-client-id.js');
   
   return null;
 }

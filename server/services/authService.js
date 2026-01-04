@@ -1,4 +1,5 @@
 const axios = require('axios');
+const db = require('../database');
 
 const API_BASE_URL = process.env.API_BASE_URL || 'https://ymca-triangle.fisikal.com/api/web';
 const YMCA_URL = process.env.YMCA_URL || 'https://ymca-triangle.fisikal.com';
@@ -55,8 +56,9 @@ async function loginWithAPI() {
         
         // CRITICAL: Call /users/clients/linked to establish full session state
         // This is what the browser does after login and enables lock_version in responses
+        // We also extract the client_id from this response
         try {
-          await axios.get(`${API_BASE_URL}/users/clients/linked?include_self=true&json=${encodeURIComponent(JSON.stringify({ limit: { start: 0, count: 10 } }))}`, {
+          const linkedResponse = await axios.get(`${API_BASE_URL}/users/clients/linked?include_self=true&json=${encodeURIComponent(JSON.stringify({ limit: { start: 0, count: 10 } }))}`, {
             headers: {
               'Cookie': cookieValue,
               'Accept': '*/*',
@@ -65,6 +67,23 @@ async function loginWithAPI() {
             }
           });
           console.log('Session state initialized');
+          
+          // Extract client_id from response
+          const clients = linkedResponse.data?.data || linkedResponse.data?.clients || [];
+          if (clients.length > 0) {
+            const clientId = clients[0].id;
+            console.log(`✓ Auto-detected client_id: ${clientId}`);
+            
+            // Save to database for future use
+            try {
+              await db.saveClientId(clientId);
+              console.log('✓ Saved client_id to database');
+            } catch (dbError) {
+              console.warn('Could not save client_id to database:', dbError.message);
+            }
+          } else {
+            console.warn('⚠️  No client data found in /users/clients/linked response');
+          }
         } catch (initError) {
           console.warn('Session initialization failed:', initError.message);
         }

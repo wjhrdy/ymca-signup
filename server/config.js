@@ -36,10 +36,6 @@ function loadConfig() {
       console.log('No preferred locations configured - fetching from all locations');
     }
     
-    if (config.clientId) {
-      console.log(`Client ID configured: ${config.clientId}`);
-    }
-    
     return config;
   } catch (error) {
     console.error('Error loading config.yaml:', error.message);
@@ -47,7 +43,6 @@ function loadConfig() {
     
     config = {
       preferredLocations: [],
-      clientId: null,
       scheduler: {
         checkIntervalMinutes: 5,
         defaultSignupHoursBefore: 46
@@ -69,13 +64,6 @@ function getConfig() {
   return config;
 }
 
-function getClientId() {
-  if (!config) {
-    loadConfig();
-  }
-  return config.clientId || null;
-}
-
 function reloadConfig() {
   return loadConfig();
 }
@@ -83,6 +71,5 @@ function reloadConfig() {
 module.exports = {
   loadConfig,
   getConfig,
-  getClientId,
   reloadConfig
 };

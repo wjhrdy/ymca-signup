@@ -1,6 +1,16 @@
 const classService = require('./classService');
 const db = require('../database');
 
+/**
+ * Check for classes that need signup and attempt to book them.
+ * This function implements a retry mechanism: any class within its booking window
+ * will be retried on every scheduler run until either:
+ * 1. Signup succeeds, or
+ * 2. The class time passes
+ * 
+ * This ensures that if the computer was asleep when the booking window opened,
+ * the class will still be booked once the computer wakes up and the scheduler runs.
+ */
 async function checkAndSignup(sessionCookie) {
   try {
     const trackedClasses = await db.getAllTrackedClasses();
@@ -80,14 +90,28 @@ async function checkAndSignup(sessionCookie) {
         }
 
         const existingLog = await db.getSignupLogs(1000);
-        const alreadySignedUp = existingLog.some(log => 
+        const successfulSignup = existingLog.find(log => 
           log.occurrence_id === classToSignup.id && 
           log.status === 'success'
         );
 
-        if (alreadySignedUp) {
+        if (successfulSignup) {
           console.log(`  ⏭️  Skipping: Already signed up for this class`);
           continue;
+        }
+
+        const failedAttempts = existingLog.filter(log => 
+          log.occurrence_id === classToSignup.id && 
+          log.status === 'failed'
+        );
+
+        if (failedAttempts.length > 0) {
+          const lastAttempt = failedAttempts[failedAttempts.length - 1];
+          const lastAttemptTime = new Date(lastAttempt.timestamp);
+          const minutesSinceLastAttempt = (now - lastAttemptTime) / (60 * 1000);
+          console.log(`  🔄 Retry attempt #${failedAttempts.length + 1}: Last attempt was ${minutesSinceLastAttempt.toFixed(1)} minutes ago`);
+          console.log(`     Last error: ${lastAttempt.error_message || 'Unknown'}`);
+          console.log(`     Retrying since class is still within booking window...`);
         }
 
         if (!classToSignup.canSignup) {
@@ -96,12 +120,25 @@ async function checkAndSignup(sessionCookie) {
 
         console.log(`  ✅ ATTEMPTING TO BOOK: ${classToSignup.serviceName} at ${classTime}`);
         
-        // Pass lock_version from class data (now available thanks to auth fix)
-        const lockVersion = classToSignup.lock_version;
+        // For retry attempts, fetch fresh occurrence details to get latest lock_version
+        let lockVersion = classToSignup.lock_version;
+        if (failedAttempts.length > 0 && !lockVersion) {
+          console.log(`  🔄 Fetching fresh occurrence details for retry...`);
+          try {
+            const freshDetails = await classService.getOccurrenceDetails(sessionCookie, classToSignup.id);
+            if (freshDetails?.occurrence?.lock_version) {
+              lockVersion = freshDetails.occurrence.lock_version;
+              console.log(`  ✓ Retrieved fresh lock_version: ${lockVersion}`);
+            }
+          } catch (error) {
+            console.log(`  ⚠️  Could not fetch fresh details: ${error.message}`);
+          }
+        }
+        
         if (lockVersion !== undefined) {
           console.log(`  Using lock_version: ${lockVersion}`);
         } else {
-          console.log(`  ⚠️  No lock_version in class data`);
+          console.log(`  ⚠️  No lock_version available`);
         }
         
         try {

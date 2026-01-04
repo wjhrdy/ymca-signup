@@ -1,10 +1,5 @@
 # YMCA Auto-Signup Configuration
 
-# Your YMCA client ID (required for accurate enrollment detection)
-# Run: node debug-browser.js and check the captured API requests to find your client_id
-# Look for requests with "client_id" in the URL parameters
-clientId: 8084
-
 # Preferred YMCA locations to fetch classes from
 # To find location IDs, run: node get-locations.js
 # Leave empty array [] to fetch from all locations
@@ -12,6 +7,30 @@ preferredLocations:
   - 15  # Alexander Family YMCA
   - 24  # Poyner YMCA
   - 25  # Southeast Raleigh YMCA
+
+# All available locations (uncomment the ones you want to add):
+#  - 1   # Downtown Durham YMCA
+#  - 7   # Lakewood YMCA
+#  - 9   # YMCA at American Tobacco
+#  - 12  # Hope Valley Farms YMCA
+#  - 14  # A.E. Finley YMCA
+#  - 15  # Alexander Family YMCA
+#  - 16  # Chapel Hill-Carrboro YMCA
+#  - 17  # Chatham Park YMCA
+#  - 18  # East Triangle YMCA
+#  - 19  # Ingram Family YMCA
+#  - 20  # Kerr Family YMCA
+#  - 21  # Kraft Family YMCA
+#  - 22  # Northwest Cary YMCA
+#  - 23  # Poole Family YMCA
+#  - 24  # Poyner YMCA
+#  - 25  # Southeast Raleigh YMCA
+#  - 26  # Taylor Family YMCA
+#  - 27  # Knightdale Station YMCA
+#  - 28  # YMCA at Meadowmont
+#  - 143 # Test Location
+#  - 179 # Y Health Member
+#  - 180 # YMCA 7 Day Pass Member
 
 # Scheduler settings
 scheduler:
