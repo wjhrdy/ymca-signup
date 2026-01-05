@@ -1,4 +1,5 @@
 const axios = require('axios');
+const logger = require('../logger');
 const config = require('../config');
 const db = require('../database');
 
@@ -28,7 +29,7 @@ async function getCSRFToken(sessionCookie) {
     }
     return null;
   } catch (error) {
-    console.warn('Could not fetch CSRF token:', error.message);
+    logger.warn('Could not fetch CSRF token:', error.message);
     return null;
   }
 }
@@ -43,16 +44,16 @@ async function getUserClientId(sessionCookie) {
     const dbClientId = await db.getClientId();
     if (dbClientId) {
       cachedClientId = dbClientId;
-      console.log(`Using auto-detected client_id: ${cachedClientId}`);
+      logger.info(`Using auto-detected client_id: ${cachedClientId}`);
       return cachedClientId;
     }
   } catch (error) {
-    console.warn('Could not read client_id from database:', error.message);
+    logger.warn('Could not read client_id from database:', error.message);
   }
   
-  console.warn('⚠️  No client_id found');
-  console.warn('   Client ID is auto-detected during login');
-  console.warn('   Enrollment detection will be inaccurate without it');
+  logger.warn('⚠️  No client_id found');
+  logger.warn('   Client ID is auto-detected during login');
+  logger.warn('   Enrollment detection will be inaccurate without it');
   
   return null;
 }
@@ -63,7 +64,7 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
   }
 
   if (!clientId) {
-    console.log('No client ID available, using is_joined flags from occurrences API');
+    logger.debug('No client ID available, using is_joined flags from occurrences API');
     const now = new Date();
     
     classes.forEach(cls => {
@@ -80,14 +81,14 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
     });
     
     const joinedCount = classes.filter(c => c.isJoined).length;
-    console.log(`Classes with isJoined=true: ${joinedCount} out of ${classes.length}`);
+    logger.debug(`Classes with isJoined=true: ${joinedCount} out of ${classes.length}`);
     
     return classes;
   }
 
   // Fetch user's enrolled classes using the bookings endpoint
   try {
-    console.log(`Fetching enrolled classes for client_id: ${clientId}...`);
+    logger.debug(`Fetching enrolled classes for client_id: ${clientId}...`);
     
     const now = new Date();
     const endDate = new Date();
@@ -116,13 +117,13 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
     const enrolledClasses = response.data?.data || [];
     const enrolledOccurrenceIds = new Set(enrolledClasses.map(c => c.id));
     
-    console.log(`Found ${enrolledClasses.length} enrolled classes. IDs:`, Array.from(enrolledOccurrenceIds).slice(0, 10));
+    logger.debug(`Found ${enrolledClasses.length} enrolled classes. IDs:`, Array.from(enrolledOccurrenceIds).slice(0, 10));
     
     classes.forEach(cls => {
       const actuallyEnrolled = enrolledOccurrenceIds.has(cls.id);
       
       if (actuallyEnrolled !== cls.isJoined) {
-        console.log(`✓ Corrected enrollment for class ${cls.id} (${cls.serviceName}): was ${cls.isJoined}, now ${actuallyEnrolled}`);
+        logger.debug(`✓ Corrected enrollment for class ${cls.id} (${cls.serviceName}): was ${cls.isJoined}, now ${actuallyEnrolled}`);
       }
       
       cls.isJoined = actuallyEnrolled;
@@ -140,12 +141,12 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
     });
     
     const joinedCount = classes.filter(c => c.isJoined).length;
-    console.log(`Enrollment verification complete. Classes with isJoined=true: ${joinedCount} out of ${classes.length}`);
+    logger.debug(`Enrollment verification complete. Classes with isJoined=true: ${joinedCount} out of ${classes.length}`);
     
     return classes;
   } catch (error) {
-    console.error('Failed to fetch enrolled classes:', error.message);
-    console.warn('Falling back to is_joined flags from initial query');
+    logger.error('Failed to fetch enrolled classes:', error.message);
+    logger.warn('Falling back to is_joined flags from initial query');
     return classes;
   }
 }
@@ -165,17 +166,17 @@ async function fetchClasses(sessionCookie, filters = {}) {
       ]
     };
     
-    console.log('Config loaded:', JSON.stringify(appConfig, null, 2));
-    console.log('Filters provided:', JSON.stringify(filters, null, 2));
+    logger.debug('Config loaded:', JSON.stringify(appConfig, null, 2));
+    logger.debug('Filters provided:', JSON.stringify(filters, null, 2));
     
     if (filters.locationId) {
-      console.log(`Using explicit locationId filter: ${filters.locationId}`);
+      logger.debug(`Using explicit locationId filter: ${filters.locationId}`);
       filterObj.filter.push({ by: 'location_id', with: [filters.locationId] });
     } else if (appConfig.preferredLocations && appConfig.preferredLocations.length > 0) {
-      console.log(`Applying preferred locations from config: ${appConfig.preferredLocations.join(', ')}`);
+      logger.debug(`Applying preferred locations from config: ${appConfig.preferredLocations.join(', ')}`);
       filterObj.filter.push({ by: 'location_id', with: appConfig.preferredLocations });
     } else {
-      console.log('No location filter applied - fetching from ALL locations');
+      logger.debug('No location filter applied - fetching from ALL locations');
     }
 
     const jsonParam = encodeURIComponent(JSON.stringify(filterObj));
@@ -188,25 +189,25 @@ async function fetchClasses(sessionCookie, filters = {}) {
       'X-Requested-With': 'XMLHttpRequest'
     };
     
-    console.log('Fetching classes...');
-    console.log('URL:', url);
-    console.log('Cookie:', sessionCookie.substring(0, 50) + '...');
+    logger.debug('Fetching classes...');
+    logger.debug('URL:', url);
+    logger.debug('Cookie:', sessionCookie.substring(0, 50) + '...');
 
     const response = await axios.get(url, { headers });
 
-    console.log('Response status:', response.status);
-    console.log('Response data keys:', Object.keys(response.data || {}));
+    logger.debug('Response status:', response.status);
+    logger.debug('Response data keys:', Object.keys(response.data || {}));
     
     const occurrences = response.data?.data || response.data?.occurrences || [];
-    console.log('Occurrences count:', occurrences.length);
+    logger.debug('Occurrences count:', occurrences.length);
 
     if (occurrences.length > 0) {
-      console.log('Sample occurrence data:', JSON.stringify(occurrences[0], null, 2));
+      logger.debug('Sample occurrence data:', JSON.stringify(occurrences[0], null, 2));
       
       // Log lap lane occurrences for debugging
       const lapLanes = occurrences.filter(o => o.service_title?.includes('Lap Lane'));
       if (lapLanes.length > 0) {
-        console.log('Lap Lane occurrence data:', JSON.stringify(lapLanes[0], null, 2));
+        logger.debug('Lap Lane occurrence data:', JSON.stringify(lapLanes[0], null, 2));
       }
       
       const classes = occurrences.map((occurrence, index) => {
@@ -266,8 +267,8 @@ async function fetchClasses(sessionCookie, filters = {}) {
             lock_version: occurrence.lock_version
           };
         } catch (error) {
-          console.error(`Error processing occurrence at index ${index}:`, error.message);
-          console.error('Occurrence data:', JSON.stringify(occurrence, null, 2));
+          logger.error(`Error processing occurrence at index ${index}:`, error.message);
+          logger.error('Occurrence data:', JSON.stringify(occurrence, null, 2));
           return null;
         }
       }).filter(c => c !== null);
@@ -276,7 +277,7 @@ async function fetchClasses(sessionCookie, filters = {}) {
       const filteredClasses = classes.filter(c => !c.isReadonly);
       const readonlyCount = classes.length - filteredClasses.length;
       if (readonlyCount > 0) {
-        console.log(`Filtered out ${readonlyCount} readonly services (pool lanes, etc.)`);
+        logger.debug(`Filtered out ${readonlyCount} readonly services (pool lanes, etc.)`);
       }
       
       const verifyBookings = filters.verifyBookings !== false;
@@ -288,11 +289,11 @@ async function fetchClasses(sessionCookie, filters = {}) {
       return filteredClasses;
     }
 
-    console.log('No occurrences found in response, returning empty array');
+    logger.debug('No occurrences found in response, returning empty array');
     return [];
   } catch (error) {
-    console.error('Error fetching classes:', error.response?.data || error.message);
-    console.error('Error details:', {
+    logger.error('Error fetching classes:', error.response?.data || error.message);
+    logger.error('Error details:', {
       status: error.response?.status,
       statusText: error.response?.statusText,
       headers: error.response?.headers
@@ -317,7 +318,7 @@ async function getOccurrenceDetails(sessionCookie, occurrenceId) {
     );
     return response.data;
   } catch (error) {
-    console.error('Error fetching occurrence details:', error.response?.data || error.message);
+    logger.error('Error fetching occurrence details:', error.response?.data || error.message);
     return null;
   }
 }
@@ -327,7 +328,7 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
     const csrfToken = await getCSRFToken(sessionCookie);
     
     if (!csrfToken) {
-      console.warn('No CSRF token available, attempting without it...');
+      logger.warn('No CSRF token available, attempting without it...');
     }
     
     // Try to get lock_version if not provided, but don't fail if we can't get it
@@ -336,22 +337,22 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
         const details = await getOccurrenceDetails(sessionCookie, occurrenceId);
         if (details?.occurrence?.lock_version !== undefined) {
           lockVersion = details.occurrence.lock_version;
-          console.log(`Fetched lock_version from details: ${lockVersion}`);
+          logger.debug(`Fetched lock_version from details: ${lockVersion}`);
         } else {
-          console.log('⚠️  lock_version not available from API, attempting signup anyway...');
+          logger.debug('⚠️  lock_version not available from API, attempting signup anyway...');
         }
       } catch (error) {
-        console.log(`⚠️  Could not fetch occurrence details (${error.message}), attempting signup without lock_version...`);
+        logger.debug(`⚠️  Could not fetch occurrence details (${error.message}), attempting signup without lock_version...`);
       }
     } else {
-      console.log(`Using provided lock_version: ${lockVersion}`);
+      logger.debug(`Using provided lock_version: ${lockVersion}`);
     }
     
     const payload = (lockVersion !== null && lockVersion !== undefined) ? { lock_version: lockVersion } : {};
     const formData = new URLSearchParams();
     formData.append('json', JSON.stringify(payload));
 
-    console.log(`Attempting to join occurrence ${occurrenceId} with payload:`, payload);
+    logger.info(`Attempting to join occurrence ${occurrenceId} with payload:`, payload);
     
     const response = await axios.post(
       `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/join`,
@@ -371,21 +372,21 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
       }
     );
 
-    console.log('✓ Successfully joined class');
-    console.log('Response data:', JSON.stringify(response.data, null, 2));
+    logger.info('✓ Successfully joined class');
+    logger.debug('Response data:', JSON.stringify(response.data, null, 2));
     return response.data;
   } catch (error) {
     const errorData = error.response?.data;
     const errorMessage = errorData?.exception || errorData?.error || error.message;
     const status = error.response?.status;
     
-    console.error(`Join request failed with status ${status}:`, errorMessage);
-    console.error('Full error response:', JSON.stringify(errorData, null, 2));
+    logger.error(`Join request failed with status ${status}:`, errorMessage);
+    logger.error('Full error response:', JSON.stringify(errorData, null, 2));
     
     // Check if already enrolled
     if (status === 422) {
       if (errorMessage && (errorMessage.includes('already') || errorMessage.includes('enrolled') || errorMessage.includes('joined'))) {
-        console.log('ℹ️  Already enrolled in this class');
+        logger.info('ℹ️  Already enrolled in this class');
         const alreadyEnrolledError = new Error('Already enrolled in this class');
         alreadyEnrolledError.code = 'ALREADY_ENROLLED';
         throw alreadyEnrolledError;
@@ -393,13 +394,13 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
       
       // Class is full, try waitlist if enabled
       if (tryWaitlist && waitingListEnabled) {
-        console.log('Class full, trying waitlist...');
+        logger.info('Class full, trying waitlist...');
         try {
           return await joinWaitlist(sessionCookie, occurrenceId);
         } catch (waitlistError) {
           // If waitlist fails with 404, might mean already enrolled or waitlist disabled
           if (waitlistError.response?.status === 404) {
-            console.log('⚠️  Waitlist endpoint not found (404) - might be already enrolled or waitlist disabled');
+            logger.warn('⚠️  Waitlist endpoint not found (404) - might be already enrolled or waitlist disabled');
             const notAvailableError = new Error('Class full and waitlist not available');
             notAvailableError.code = 'WAITLIST_NOT_AVAILABLE';
             throw notAvailableError;
@@ -407,7 +408,7 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
           throw waitlistError;
         }
       } else if (tryWaitlist && !waitingListEnabled) {
-        console.log('⚠️  Class is full but waitlist is not enabled');
+        logger.warn('⚠️  Class is full but waitlist is not enabled');
         const notAvailableError = new Error('Class full and waitlist not enabled');
         notAvailableError.code = 'WAITLIST_NOT_ENABLED';
         throw notAvailableError;
@@ -422,7 +423,7 @@ async function joinWaitlist(sessionCookie, occurrenceId) {
     const csrfToken = await getCSRFToken(sessionCookie);
     
     if (!csrfToken) {
-      console.warn('No CSRF token available, attempting without it...');
+      logger.warn('No CSRF token available, attempting without it...');
     }
     
     const formData = new URLSearchParams();
@@ -446,16 +447,16 @@ async function joinWaitlist(sessionCookie, occurrenceId) {
       }
     );
 
-    console.log('✓ Successfully joined waitlist');
+    logger.info('✓ Successfully joined waitlist');
     return { ...response.data, waitlisted: true };
   } catch (error) {
     const errorData = error.response?.data;
     const status = error.response?.status;
     
     if (status === 404) {
-      console.log('⚠️  Waitlist endpoint not found (404) - waitlist may be disabled or you may already be enrolled');
+      logger.warn('⚠️  Waitlist endpoint not found (404) - waitlist may be disabled or you may already be enrolled');
     } else {
-      console.error('Failed to join waitlist:', errorData || error.message);
+      logger.error('Failed to join waitlist:', errorData || error.message);
     }
     throw error;
   }
@@ -500,18 +501,18 @@ async function getMyBookings(sessionCookie, filters = {}) {
 
     return response.data;
   } catch (error) {
-    console.error('Error fetching bookings:', error.response?.data || error.message);
+    logger.error('Error fetching bookings:', error.response?.data || error.message);
     throw error;
   }
 }
 
 async function cancelBooking(sessionCookie, occurrenceId) {
   try {
-    console.log(`Attempting to cancel occurrence ${occurrenceId}...`);
-    console.log(`Session cookie: ${sessionCookie.substring(0, 50)}...`);
+    logger.info(`Attempting to cancel occurrence ${occurrenceId}...`);
+    logger.debug(`Session cookie: ${sessionCookie.substring(0, 50)}...`);
     
     const csrfToken = await getCSRFToken(sessionCookie);
-    console.log(`CSRF token obtained: ${csrfToken ? csrfToken.substring(0, 20) + '...' : 'NONE'}`);
+    logger.debug(`CSRF token obtained: ${csrfToken ? csrfToken.substring(0, 20) + '...' : 'NONE'}`);
     
     if (!csrfToken) {
       throw new Error('Failed to obtain CSRF token. Session may be invalid.');
@@ -520,7 +521,7 @@ async function cancelBooking(sessionCookie, occurrenceId) {
     const formData = new URLSearchParams();
     formData.append('json', JSON.stringify({}));
 
-    console.log(`Making DELETE request to: ${API_BASE_URL}/schedule/occurrences/${occurrenceId}/cancel`);
+    logger.debug(`Making DELETE request to: ${API_BASE_URL}/schedule/occurrences/${occurrenceId}/cancel`);
     
     const response = await axios.delete(
       `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/cancel`,
@@ -540,7 +541,7 @@ async function cancelBooking(sessionCookie, occurrenceId) {
       }
     );
 
-    console.log('✓ Successfully cancelled booking');
+    logger.info('✓ Successfully cancelled booking');
     return response.data;
   } catch (error) {
     const errorData = error.response?.data;
@@ -560,7 +561,7 @@ async function cancelBooking(sessionCookie, occurrenceId) {
       errorMessage = `Failed to cancel booking: ${error.message}`;
     }
     
-    console.error(errorMessage);
+    logger.error(errorMessage);
     const err = new Error(errorMessage);
     err.status = status;
     err.originalError = errorData;
@@ -593,7 +594,7 @@ async function getLocations(sessionCookie) {
 
     return response.data;
   } catch (error) {
-    console.error('Error fetching locations:', error.response?.data || error.message);
+    logger.error('Error fetching locations:', error.response?.data || error.message);
     throw error;
   }
 }
@@ -622,7 +623,7 @@ async function getServices(sessionCookie) {
 
     return response.data;
   } catch (error) {
-    console.error('Error fetching services:', error.response?.data || error.message);
+    logger.error('Error fetching services:', error.response?.data || error.message);
     throw error;
   }
 }
@@ -805,7 +806,7 @@ async function autoBookClass(sessionCookie, profile, options = {}) {
 
     // Book the first matching unbooked class
     const classToBook = unbookedClasses[0];
-    console.log(`Auto-booking class: ${classToBook.service_title} at ${classToBook.occurs_at}`);
+    logger.info(`Auto-booking class: ${classToBook.service_title} at ${classToBook.occurs_at}`);
     
     const bookingResult = await signupForClass(sessionCookie, classToBook.id, tryWaitlist);
     
@@ -824,7 +825,7 @@ async function autoBookClass(sessionCookie, profile, options = {}) {
       totalMatches: matchingClasses.length
     };
   } catch (error) {
-    console.error('Error in auto-booking:', error.message);
+    logger.error('Error in auto-booking:', error.message);
     return {
       success: false,
       error: error.message,

@@ -1,4 +1,5 @@
 const axios = require('axios');
+const logger = require('../logger');
 const db = require('../database');
 
 const API_BASE_URL = process.env.API_BASE_URL || 'https://ymca-triangle.fisikal.com/api/web';
@@ -52,7 +53,7 @@ async function loginWithAPI() {
       const sessionCookie = setCookieHeader.find(cookie => cookie.includes('fisikal_v2_session'));
       if (sessionCookie) {
         const cookieValue = sessionCookie.split(';')[0];
-        console.log('Successfully authenticated with API');
+        logger.info('Successfully authenticated with API');
         
         // CRITICAL: Call /users/clients/linked to establish full session state
         // This is what the browser does after login and enables lock_version in responses
@@ -66,26 +67,26 @@ async function loginWithAPI() {
               'X-Requested-With': 'XMLHttpRequest'
             }
           });
-          console.log('Session state initialized');
+          logger.info('Session state initialized');
           
           // Extract client_id from response
           const clients = linkedResponse.data?.data || linkedResponse.data?.clients || [];
           if (clients.length > 0) {
             const clientId = clients[0].id;
-            console.log(`✓ Auto-detected client_id: ${clientId}`);
+            logger.info(`✓ Auto-detected client_id: ${clientId}`);
             
             // Save to database for future use
             try {
               await db.saveClientId(clientId);
-              console.log('✓ Saved client_id to database');
+              logger.info('✓ Saved client_id to database');
             } catch (dbError) {
-              console.warn('Could not save client_id to database:', dbError.message);
+              logger.warn('Could not save client_id to database:', dbError.message);
             }
           } else {
-            console.warn('⚠️  No client data found in /users/clients/linked response');
+            logger.warn('⚠️  No client data found in /users/clients/linked response');
           }
         } catch (initError) {
-          console.warn('Session initialization failed:', initError.message);
+          logger.warn('Session initialization failed:', initError.message);
         }
         
         return cookieValue;
@@ -94,7 +95,7 @@ async function loginWithAPI() {
     
     throw new Error('Authentication failed - no session cookie received');
   } catch (error) {
-    console.error('API authentication failed:', error.message);
+    logger.error('API authentication failed:', error.message);
     throw error;
   }
 }
@@ -103,7 +104,7 @@ async function login() {
   try {
     return await loginWithAPI();
   } catch (error) {
-    console.error('Login failed:', error);
+    logger.error('Login failed:', error);
     throw error;
   }
 }

@@ -1,3 +1,4 @@
+const logger = require('../logger');
 const classService = require('./classService');
 const db = require('../database');
 
@@ -26,7 +27,7 @@ async function checkAndSignup(sessionCookie) {
     const autoSignupClasses = trackedClasses.filter(c => c.auto_signup);
 
     if (autoSignupClasses.length === 0) {
-      console.log('No auto-signup classes tracked. Skipping scheduler run.');
+      logger.debug('No auto-signup classes tracked. Skipping scheduler run.');
       return;
     }
 
@@ -70,19 +71,19 @@ async function checkAndSignup(sessionCookie) {
     const cacheStale = cacheAge > CACHE_DURATION_MS;
     
     if (!needsFetch && !cacheStale) {
-      console.log(`Scheduler: No booking windows approaching. Skipping API fetch. Next check in 5 minutes.`);
+      logger.debug(`Scheduler: No booking windows approaching. Skipping API fetch. Next check in 5 minutes.`);
       return;
     }
     
     if (cacheStale && needsFetch) {
-      console.log(`Scheduler: Booking window approaching. Fetching fresh data from API...`);
+      logger.info(`Scheduler: Booking window approaching. Fetching fresh data from API...`);
     } else if (inActiveBookingWindow) {
-      console.log(`Scheduler: In active booking window. Fetching fresh data...`);
+      logger.info(`Scheduler: In active booking window. Fetching fresh data...`);
     } else if (needsFetch) {
-      console.log(`Scheduler: Using cached data (${Math.floor(cacheAge / 1000)}s old)...`);
+      logger.debug(`Scheduler: Using cached data (${Math.floor(cacheAge / 1000)}s old)...`);
     }
     
-    console.log(`Checking ${autoSignupClasses.length} auto-signup classes...`);
+    logger.info(`Checking ${autoSignupClasses.length} auto-signup classes...`);
 
     let allClasses;
     
@@ -100,17 +101,17 @@ async function checkAndSignup(sessionCookie) {
       
       cachedClasses = allClasses;
       lastFetchTime = now;
-      console.log(`Fetched ${allClasses.length} classes from API (verifyBookings=false)`);
+      logger.debug(`Fetched ${allClasses.length} classes from API (verifyBookings=false)`);
     } else {
       allClasses = cachedClasses;
-      console.log(`Using ${allClasses.length} cached classes`);
+      logger.debug(`Using ${allClasses.length} cached classes`);
     }
 
     for (const tracked of autoSignupClasses) {
-      console.log(`\n📋 Checking tracked class: ${tracked.service_name}`);
-      console.log(`   Service ID: ${tracked.service_id}, Trainer: ${tracked.trainer_name || 'any'}, Location: ${tracked.location_name}`);
-      console.log(`   Day: ${tracked.day_of_week}, Time: ${tracked.start_time}`);
-      console.log(`   Match settings: trainer=${tracked.match_trainer}, exactTime=${tracked.match_exact_time}, tolerance=${tracked.time_tolerance}min`);
+      logger.info(`\n📋 Checking tracked class: ${tracked.service_name}`);
+      logger.debug(`   Service ID: ${tracked.service_id}, Trainer: ${tracked.trainer_name || 'any'}, Location: ${tracked.location_name}`);
+      logger.debug(`   Day: ${tracked.day_of_week}, Time: ${tracked.start_time}`);
+      logger.debug(`   Match settings: trainer=${tracked.match_trainer}, exactTime=${tracked.match_exact_time}, tolerance=${tracked.time_tolerance}min`);
       
       const matchingClasses = allClasses.filter(c => {
         // Use loose equality to handle string vs number comparison
@@ -168,13 +169,13 @@ async function checkAndSignup(sessionCookie) {
         const classTime = new Date(classToSignup.startTime);
         const hoursUntilClass = (classTime.getTime() - now.getTime()) / (60 * 60 * 1000);
         
-        console.log(`\nEvaluating class: ${classToSignup.serviceName} at ${classTime.toISOString()}`);
-        console.log(`  Hours until class: ${hoursUntilClass.toFixed(2)}`);
-        console.log(`  canSignup: ${classToSignup.canSignup}`);
-        console.log(`  isJoined: ${classToSignup.isJoined}`);
-        console.log(`  isWaited: ${classToSignup.isWaited}`);
-        console.log(`  fullGroup: ${classToSignup.fullGroup}`);
-        console.log(`  waitingListEnabled: ${classToSignup.waitingListEnabled}`);
+        logger.debug(`\nEvaluating class: ${classToSignup.serviceName} at ${classTime.toISOString()}`);
+        logger.debug(`  Hours until class: ${hoursUntilClass.toFixed(2)}`);
+        logger.debug(`  canSignup: ${classToSignup.canSignup}`);
+        logger.debug(`  isJoined: ${classToSignup.isJoined}`);
+        logger.debug(`  isWaited: ${classToSignup.isWaited}`);
+        logger.debug(`  fullGroup: ${classToSignup.fullGroup}`);
+        logger.debug(`  waitingListEnabled: ${classToSignup.waitingListEnabled}`);
 
         // User preference for when to sign up
         const userPreferredHours = tracked.signup_hours_before || 46;
@@ -193,21 +194,21 @@ async function checkAndSignup(sessionCookie) {
         const signupTime = new Date(classTime.getTime() - (signupHoursBefore * 60 * 60 * 1000));
         const hoursUntilSignupWindow = (signupTime.getTime() - now.getTime()) / (60 * 60 * 1000);
 
-        console.log(`  userPreferredHours: ${userPreferredHours}`);
-        console.log(`  ymcaRestrictionHours: ${ymcaRestrictionHours}`);
-        console.log(`  effectiveSignupHoursBefore: ${signupHoursBefore}`);
-        console.log(`  signupTime: ${signupTime.toISOString()}`);
-        console.log(`  hoursUntilSignupWindow: ${hoursUntilSignupWindow.toFixed(2)}`);
-        console.log(`  now >= signupTime: ${now >= signupTime}`);
-        console.log(`  now < classTime: ${now < classTime}`);
+        logger.debug(`  userPreferredHours: ${userPreferredHours}`);
+        logger.debug(`  ymcaRestrictionHours: ${ymcaRestrictionHours}`);
+        logger.debug(`  effectiveSignupHoursBefore: ${signupHoursBefore}`);
+        logger.debug(`  signupTime: ${signupTime.toISOString()}`);
+        logger.debug(`  hoursUntilSignupWindow: ${hoursUntilSignupWindow.toFixed(2)}`);
+        logger.debug(`  now >= signupTime: ${now >= signupTime}`);
+        logger.debug(`  now < classTime: ${now < classTime}`);
 
         if (now < signupTime) {
-          console.log(`  ⏰ Waiting: Signup window opens in ${hoursUntilSignupWindow.toFixed(2)} hours`);
+          logger.debug(`  ⏰ Waiting: Signup window opens in ${hoursUntilSignupWindow.toFixed(2)} hours`);
           continue;
         }
 
         if (now >= classTime) {
-          console.log(`  ⏱️  Skipping: Class has already started/passed`);
+          logger.debug(`  ⏱️  Skipping: Class has already started/passed`);
           continue;
         }
 
@@ -218,7 +219,7 @@ async function checkAndSignup(sessionCookie) {
         );
 
         if (successfulSignup) {
-          console.log(`  ⏭️  Skipping: Already signed up for this class`);
+          logger.debug(`  ⏭️  Skipping: Already signed up for this class`);
           continue;
         }
 
@@ -231,20 +232,20 @@ async function checkAndSignup(sessionCookie) {
           const lastAttempt = failedAttempts[failedAttempts.length - 1];
           const lastAttemptTime = new Date(lastAttempt.timestamp);
           const minutesSinceLastAttempt = (now - lastAttemptTime) / (60 * 1000);
-          console.log(`  🔄 Retry attempt #${failedAttempts.length + 1}: Last attempt was ${minutesSinceLastAttempt.toFixed(1)} minutes ago`);
-          console.log(`     Last error: ${lastAttempt.error_message || 'Unknown'}`);
-          console.log(`     Retrying since class is still within booking window...`);
+          logger.info(`  🔄 Retry attempt #${failedAttempts.length + 1}: Last attempt was ${minutesSinceLastAttempt.toFixed(1)} minutes ago`);
+          logger.debug(`     Last error: ${lastAttempt.error_message || 'Unknown'}`);
+          logger.debug(`     Retrying since class is still within booking window...`);
         }
 
         if (!classToSignup.canSignup) {
-          console.log(`  ⚠️  WARNING: In booking window but canSignup is false - attempting anyway`);
+          logger.warn(`  ⚠️  WARNING: In booking window but canSignup is false - attempting anyway`);
         }
 
-        console.log(`  ✅ ATTEMPTING TO BOOK: ${classToSignup.serviceName} at ${classTime}`);
+        logger.info(`  ✅ ATTEMPTING TO BOOK: ${classToSignup.serviceName} at ${classTime}`);
         
         // IMPORTANT: Never use cached lock_version - it changes frequently
         // Always let signupForClass fetch fresh occurrence details to get latest lock_version
-        console.log(`  🔄 Will fetch fresh lock_version immediately before signup...`);
+        logger.debug(`  🔄 Will fetch fresh lock_version immediately before signup...`);
         
         try {
           const result = await classService.signupForClass(
@@ -267,11 +268,11 @@ async function checkAndSignup(sessionCookie) {
             errorMessage: result.waitlisted ? 'Joined waitlist' : null
           });
 
-          console.log(`  ✓ ${statusMessage}: ${classToSignup.serviceName}`);
+          logger.info(`  ✓ ${statusMessage}: ${classToSignup.serviceName}`);
         } catch (error) {
           // Handle already enrolled case - not a failure
           if (error.code === 'ALREADY_ENROLLED') {
-            console.log(`  ℹ️  Already enrolled: ${classToSignup.serviceName}`);
+            logger.info(`  ℹ️  Already enrolled: ${classToSignup.serviceName}`);
             // Don't log as failed, just skip
             continue;
           }
@@ -281,7 +282,7 @@ async function checkAndSignup(sessionCookie) {
             const message = error.code === 'WAITLIST_NOT_ENABLED' 
               ? 'Class full, waitlist not enabled'
               : 'Class full, waitlist not available';
-            console.log(`  ⚠️  ${message}: ${classToSignup.serviceName}`);
+            logger.warn(`  ⚠️  ${message}: ${classToSignup.serviceName}`);
             await db.addSignupLog({
               occurrenceId: classToSignup.id,
               serviceName: classToSignup.serviceName,
@@ -294,7 +295,7 @@ async function checkAndSignup(sessionCookie) {
             continue;
           }
           
-          console.error(`  ✗ Failed to sign up for: ${classToSignup.serviceName}`, error.message);
+          logger.error(`  ✗ Failed to sign up for: ${classToSignup.serviceName}`, error.message);
           
           await db.addSignupLog({
             occurrenceId: classToSignup.id,
@@ -309,7 +310,7 @@ async function checkAndSignup(sessionCookie) {
       }
     }
   } catch (error) {
-    console.error('Scheduler check error:', error);
+    logger.error('Scheduler check error:', error);
     throw error;
   }
 }

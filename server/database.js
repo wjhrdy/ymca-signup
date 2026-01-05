@@ -1,4 +1,5 @@
 const sqlite3 = require('sqlite3').verbose();
+const logger = require('./logger');
 const path = require('path');
 
 const dbPath = path.join(__dirname, '..', 'data', 'database.db');
@@ -7,9 +8,9 @@ let db;
 function initialize() {
   db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
-      console.error('Error opening database:', err);
+      logger.error('Error opening database:', err);
     } else {
-      console.log('Connected to SQLite database');
+      logger.info('Connected to SQLite database');
       createTables();
     }
   });
@@ -53,7 +54,7 @@ function createTables() {
             
             // Check if location_id has NOT NULL constraint (notnull === 1)
             if (locationIdColumn && locationIdColumn.notnull === 1) {
-              console.log('Migrating tracked_classes table to make location_id nullable...');
+              logger.info('Migrating tracked_classes table to make location_id nullable...');
               
               // SQLite doesn't support DROP CONSTRAINT, so we need to recreate the table
               db.serialize(() => {
@@ -85,7 +86,7 @@ function createTables() {
                 `);
                 
                 db.run(`DROP TABLE tracked_classes_old`, () => {
-                  console.log('Migration complete: location_id is now nullable');
+                  logger.info('Migration complete: location_id is now nullable');
                 });
               });
             } else {
@@ -94,7 +95,7 @@ function createTables() {
               const missingColumns = requiredColumns.filter(col => !columnNames.includes(col));
               
               if (missingColumns.length > 0) {
-                console.log('Missing columns detected, adding them:', missingColumns);
+                logger.info('Missing columns detected, adding them:', missingColumns);
                 if (!columnNames.includes('match_trainer')) {
                   db.run(`ALTER TABLE tracked_classes ADD COLUMN match_trainer BOOLEAN DEFAULT 1`);
                 }
@@ -187,7 +188,7 @@ function addTrackedClass(classData) {
       return reject(new Error('Database not initialized'));
     }
 
-    console.log('Database addTrackedClass called with:', classData);
+    logger.debug('Database addTrackedClass called with:', classData);
 
     const stmt = db.prepare(`
       INSERT INTO tracked_classes 
@@ -211,12 +212,12 @@ function addTrackedClass(classData) {
       classData.signupHoursBefore
     , function(err) {
       if (err) {
-        console.error('Database insert error:', err);
+        logger.error('Database insert error:', err);
         stmt.finalize();
         reject(err);
       } else {
         const lastID = this.lastID;
-        console.log('Successfully inserted tracked class with ID:', lastID);
+        logger.debug('Successfully inserted tracked class with ID:', lastID);
         stmt.finalize();
         resolve(lastID);
       }
@@ -474,7 +475,7 @@ function saveClientId(clientId) {
       (err) => {
         if (err) reject(err);
         else {
-          console.log(`Saved client_id ${clientId} to database`);
+          logger.debug(`Saved client_id ${clientId} to database`);
           resolve();
         }
       }

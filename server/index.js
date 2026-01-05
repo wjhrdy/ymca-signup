@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const cron = require('node-cron');
+const logger = require('./logger');
 const appConfig = require('./config');
 const db = require('./database');
 const authService = require('./services/authService');
@@ -25,9 +26,9 @@ async function initializeDatabase() {
     setTimeout(async () => {
       sessionCookie = await db.loadSession();
       if (sessionCookie) {
-        console.log('Loaded saved session from database');
+        logger.info('Loaded saved session from database');
       } else {
-        console.log('No saved session found');
+        logger.debug('No saved session found');
       }
       dbReady = true;
       resolve();
@@ -37,7 +38,7 @@ async function initializeDatabase() {
 
 appConfig.loadConfig();
 initializeDatabase().then(() => {
-  console.log('Database initialization complete');
+  logger.info('Database initialization complete');
 });
 
 app.get('/api/status', (req, res) => {
@@ -53,10 +54,10 @@ app.post('/api/auth/login', async (req, res) => {
     const cookie = await authService.login();
     sessionCookie = cookie;
     await db.saveSession(cookie);
-    console.log('Session saved to database');
+    logger.info('Session saved to database');
     res.json({ success: true, authenticated: true });
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -66,14 +67,14 @@ app.get('/api/classes', async (req, res) => {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
       await db.saveSession(sessionCookie);
-      console.log('Session saved to database');
+      logger.info('Session saved to database');
     }
     
     const { startDate, endDate, locationId } = req.query;
     const classes = await classService.fetchClasses(sessionCookie, { startDate, endDate, locationId });
     
     if (classes.length > 0) {
-      console.log('Sample class data (first item):', {
+      logger.debug('Sample class data (first item):', {
         id: classes[0].id,
         serviceName: classes[0].serviceName,
         locationId: classes[0].locationId,
@@ -102,11 +103,11 @@ app.get('/api/classes', async (req, res) => {
     
     res.json(classes);
   } catch (error) {
-    console.error('Fetch classes error:', error);
+    logger.error('Fetch classes error:', error);
     if (error.message.includes('401') || error.response?.status === 401) {
       sessionCookie = null;
       await db.clearSession();
-      console.log('Session cleared from database');
+      logger.info('Session cleared from database');
     }
     res.status(500).json({ error: error.message });
   }
@@ -117,7 +118,7 @@ app.get('/api/tracked-classes', async (req, res) => {
     const classes = await db.getAllTrackedClasses();
     res.json(classes);
   } catch (error) {
-    console.error('Get tracked classes error:', error);
+    logger.error('Get tracked classes error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -134,7 +135,7 @@ app.post('/api/tracked-classes/preview', async (req, res) => {
       matchTrainer, matchExactTime, timeTolerance 
     } = req.body;
     
-    console.log('Preview request params:', {
+    logger.debug('Preview request params:', {
       serviceId, trainerId, locationId, locationName, dayOfWeek, startTime,
       matchTrainer, matchExactTime, timeTolerance
     });
@@ -151,10 +152,10 @@ app.post('/api/tracked-classes/preview', async (req, res) => {
       skipLocationFilter: true
     });
     
-    console.log(`Fetched ${classes.length} classes from API with verified enrollment status`);
+    logger.debug(`Fetched ${classes.length} classes from API with verified enrollment status`);
     
     if (classes.length > 0) {
-      console.log('Sample class:', {
+      logger.debug('Sample class:', {
         serviceId: classes[0].serviceId,
         serviceName: classes[0].serviceName,
         locationId: classes[0].locationId,
@@ -166,7 +167,7 @@ app.post('/api/tracked-classes/preview', async (req, res) => {
     
     // First check: how many classes match just the serviceId
     const serviceMatches = classes.filter(cls => String(cls.serviceId) === String(serviceId));
-    console.log(`Classes matching serviceId ${serviceId}: ${serviceMatches.length}`);
+    logger.debug(`Classes matching serviceId ${serviceId}: ${serviceMatches.length}`);
     
     const matchingClasses = classes.filter(cls => {
       // Use loose equality to handle string vs number comparison
@@ -187,7 +188,7 @@ app.post('/api/tracked-classes/preview', async (req, res) => {
       
       if (matchExactTime) {
         const classTime = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
-        console.log(`Comparing class time ${classTime} with target ${startTime}`);
+        logger.debug(`Comparing class time ${classTime} with target ${startTime}`);
         if (classTime !== startTime) return false;
       } else if (timeTolerance !== undefined && timeTolerance !== null) {
         // Apply time tolerance (can be 0 for exact match or higher for fuzzy match)
@@ -201,14 +202,14 @@ app.post('/api/tracked-classes/preview', async (req, res) => {
       return true;
     });
     
-    console.log(`Found ${matchingClasses.length} matching classes`);
+    logger.debug(`Found ${matchingClasses.length} matching classes`);
     if (matchingClasses.length > 0) {
-      console.log('First matching class:', JSON.stringify(matchingClasses[0], null, 2));
-      console.log('isJoined status check:', matchingClasses.map(c => ({ id: c.id, isJoined: c.isJoined, canSignup: c.canSignup })));
+      logger.debug('First matching class:', JSON.stringify(matchingClasses[0], null, 2));
+      logger.debug('isJoined status check:', matchingClasses.map(c => ({ id: c.id, isJoined: c.isJoined, canSignup: c.canSignup })));
     }
     res.json({ matchingClasses });
   } catch (error) {
-    console.error('Preview tracked classes error:', error);
+    logger.error('Preview tracked classes error:', error);
     if (error.message.includes('401') || error.response?.status === 401) {
       sessionCookie = null;
       await db.clearSession();
@@ -229,7 +230,7 @@ app.post('/api/tracked-classes', async (req, res) => {
       autoSignup, signupHoursBefore 
     } = req.body;
     
-    console.log('Add tracked class request:', {
+    logger.debug('Add tracked class request:', {
       serviceId, serviceName, trainerId, trainerName, locationId, locationName,
       dayOfWeek, startTime, matchTrainer, matchExactTime, timeTolerance,
       autoSignup, signupHoursBefore
@@ -251,11 +252,11 @@ app.post('/api/tracked-classes', async (req, res) => {
       signupHoursBefore: signupHoursBefore || parseInt(process.env.DEFAULT_SIGNUP_HOURS) || 46
     });
     
-    console.log('Successfully added tracked class with ID:', id);
+    logger.info('Successfully added tracked class with ID:', id);
     res.json({ success: true, id });
   } catch (error) {
-    console.error('Add tracked class error:', error);
-    console.error('Error stack:', error.stack);
+    logger.error('Add tracked class error:', error);
+    logger.error('Error stack:', error.stack);
     res.status(500).json({ error: error.message, stack: error.stack });
   }
 });
@@ -268,7 +269,7 @@ app.put('/api/tracked-classes/:id', (req, res) => {
     db.updateTrackedClass(id, { autoSignup, signupHoursBefore });
     res.json({ success: true });
   } catch (error) {
-    console.error('Update tracked class error:', error);
+    logger.error('Update tracked class error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -279,7 +280,7 @@ app.delete('/api/tracked-classes/:id', (req, res) => {
     db.deleteTrackedClass(id);
     res.json({ success: true });
   } catch (error) {
-    console.error('Delete tracked class error:', error);
+    logger.error('Delete tracked class error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -289,22 +290,22 @@ app.post('/api/signup/:occurrenceId', async (req, res) => {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
       await db.saveSession(sessionCookie);
-      console.log('Session saved to database');
+      logger.info('Session saved to database');
     }
     
     const { occurrenceId } = req.params;
     const { lock_version } = req.body;
     
-    console.log(`Signup request for occurrence ${occurrenceId}${lock_version !== undefined ? ` with lock_version: ${lock_version}` : ' (no lock_version provided)'}`);
+    logger.info(`Signup request for occurrence ${occurrenceId}${lock_version !== undefined ? ` with lock_version: ${lock_version}` : ' (no lock_version provided)'}`);
     
     const result = await classService.signupForClass(sessionCookie, occurrenceId, lock_version);
     res.json({ success: true, result });
   } catch (error) {
-    console.error('Signup error:', error);
+    logger.error('Signup error:', error);
     if (error.message.includes('401') || error.response?.status === 401) {
       sessionCookie = null;
       await db.clearSession();
-      console.log('Session cleared from database');
+      logger.info('Session cleared from database');
     }
     res.status(500).json({ error: error.message });
   }
@@ -315,7 +316,7 @@ app.get('/api/my-bookings', async (req, res) => {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
       await db.saveSession(sessionCookie);
-      console.log('Session saved to database');
+      logger.info('Session saved to database');
     }
     
     const { includeActiveOnly, startDate, endDate, locationId } = req.query;
@@ -329,11 +330,11 @@ app.get('/api/my-bookings', async (req, res) => {
     const bookings = await classService.getMyBookings(sessionCookie, filters);
     res.json(bookings);
   } catch (error) {
-    console.error('Get bookings error:', error);
+    logger.error('Get bookings error:', error);
     if (error.message.includes('401') || error.response?.status === 401) {
       sessionCookie = null;
       await db.clearSession();
-      console.log('Session cleared from database');
+      logger.info('Session cleared from database');
     }
     res.status(500).json({ error: error.message });
   }
@@ -344,18 +345,18 @@ app.delete('/api/bookings/:occurrenceId', async (req, res) => {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
       await db.saveSession(sessionCookie);
-      console.log('Session saved to database');
+      logger.info('Session saved to database');
     }
     
     const { occurrenceId } = req.params;
     const result = await classService.cancelBooking(sessionCookie, occurrenceId);
     res.json({ success: true, result });
   } catch (error) {
-    console.error('Cancel booking error:', error);
+    logger.error('Cancel booking error:', error);
     if (error.message.includes('401') || error.response?.status === 401) {
       sessionCookie = null;
       await db.clearSession();
-      console.log('Session cleared from database');
+      logger.info('Session cleared from database');
     }
     res.status(500).json({ error: error.message });
   }
@@ -366,7 +367,7 @@ app.get('/api/signup-logs', (req, res) => {
     const logs = db.getSignupLogs(50);
     res.json(logs);
   } catch (error) {
-    console.error('Get signup logs error:', error);
+    logger.error('Get signup logs error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -376,7 +377,7 @@ app.post('/api/class-profiles', async (req, res) => {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
       await db.saveSession(sessionCookie);
-      console.log('Session saved to database');
+      logger.info('Session saved to database');
     }
     
     const { occurrenceId, options } = req.body;
@@ -402,7 +403,7 @@ app.post('/api/class-profiles', async (req, res) => {
     
     res.json({ success: true, id, profile });
   } catch (error) {
-    console.error('Create class profile error:', error);
+    logger.error('Create class profile error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -412,7 +413,7 @@ app.get('/api/class-profiles', (req, res) => {
     const profiles = db.getAllClassProfiles();
     res.json(profiles);
   } catch (error) {
-    console.error('Get class profiles error:', error);
+    logger.error('Get class profiles error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -423,7 +424,7 @@ app.delete('/api/class-profiles/:id', (req, res) => {
     db.deleteClassProfile(id);
     res.json({ success: true });
   } catch (error) {
-    console.error('Delete class profile error:', error);
+    logger.error('Delete class profile error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -433,7 +434,7 @@ app.post('/api/auto-book/:profileId', async (req, res) => {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
       await db.saveSession(sessionCookie);
-      console.log('Session saved to database');
+      logger.info('Session saved to database');
     }
     
     const { profileId } = req.params;
@@ -462,26 +463,26 @@ app.post('/api/auto-book/:profileId', async (req, res) => {
     
     res.json(result);
   } catch (error) {
-    console.error('Auto-book error:', error);
+    logger.error('Auto-book error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 cron.schedule('*/5 * * * *', async () => {
-  console.log('Running scheduler check...');
+  logger.debug('Running scheduler check...');
   try {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
       await db.saveSession(sessionCookie);
-      console.log('Session saved to database');
+      logger.info('Session saved to database');
     }
     await schedulerService.checkAndSignup(sessionCookie);
   } catch (error) {
-    console.error('Scheduler error:', error);
+    logger.error('Scheduler error:', error);
     if (error.message?.includes('401') || error.response?.status === 401) {
       sessionCookie = null;
       await db.clearSession();
-      console.log('Session cleared from database');
+      logger.info('Session cleared from database');
     } else {
       sessionCookie = null;
     }
@@ -489,6 +490,7 @@ cron.schedule('*/5 * * * *', async () => {
 });
 
 app.listen(PORT, () => {
-  console.log(`YMCA Auto-Signup server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.YMCA_URL}`);
+  logger.info(`YMCA Auto-Signup server running on port ${PORT}`);
+  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info(`YMCA URL: ${process.env.YMCA_URL}`);
 });
