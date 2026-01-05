@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import api from '../api';
-import { Calendar, Clock, MapPin, User, Plus, RefreshCw, Search } from 'lucide-react';
+import { Calendar, Clock, MapPin, User, Plus, RefreshCw, Search, CheckCircle, UserX, ExternalLink } from 'lucide-react';
 import Fuse from 'fuse.js';
 import TrackClassModal from './TrackClassModal';
 
-function ClassBrowser({ authenticated }) {
+function ClassBrowser({ authenticated, onNavigateToTracked }) {
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [trackingClass, setTrackingClass] = useState(null);
+  const [cancellingClass, setCancellingClass] = useState(null);
   const [filters, setFilters] = useState({
     startDate: new Date().toISOString().split('T')[0],
     endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -53,6 +54,22 @@ function ClassBrowser({ authenticated }) {
     } catch (error) {
       console.error('Signup failed:', error);
       alert('Signup failed: ' + (error.response?.data?.error || error.message));
+    }
+  };
+
+  const cancelClass = async (classId, serviceName) => {
+    if (!confirm(`Cancel your enrollment in ${serviceName}?`)) return;
+
+    setCancellingClass(classId);
+    try {
+      await api.delete(`/api/bookings/${classId}`);
+      alert('Successfully cancelled class!');
+      fetchClasses();
+    } catch (error) {
+      console.error('Cancel failed:', error);
+      alert('Cancel failed: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setCancellingClass(null);
     }
   };
 
@@ -127,61 +144,69 @@ function ClassBrowser({ authenticated }) {
   };
 
   const filteredClasses = useMemo(() => {
-    if (!searchQuery.trim()) {
-      return classes;
+    let results = classes;
+
+    if (searchQuery.trim()) {
+      const structuredQuery = parseStructuredQuery(searchQuery);
+
+      if (structuredQuery) {
+        results = [...classes];
+
+        if (structuredQuery.className) {
+          const classFuse = new Fuse(results, {
+            keys: ['serviceName'],
+            threshold: 0.4,
+            includeScore: true
+          });
+          const classResults = classFuse.search(structuredQuery.className);
+          results = classResults.map(r => r.item);
+        }
+
+        if (structuredQuery.location && results.length > 0) {
+          const locationFuse = new Fuse(results, {
+            keys: ['locationName'],
+            threshold: 0.4,
+            includeScore: true
+          });
+          const locationResults = locationFuse.search(structuredQuery.location);
+          results = locationResults.map(r => r.item);
+        }
+
+        if (structuredQuery.instructor && results.length > 0) {
+          const instructorFuse = new Fuse(results, {
+            keys: ['trainerName'],
+            threshold: 0.4,
+            includeScore: true
+          });
+          const instructorResults = instructorFuse.search(structuredQuery.instructor);
+          results = instructorResults.map(r => r.item);
+        }
+      } else {
+        const fuse = new Fuse(classes, {
+          keys: [
+            { name: 'serviceName', weight: 2 },
+            { name: 'locationName', weight: 1.5 },
+            { name: 'trainerName', weight: 1 }
+          ],
+          threshold: 0.4,
+          includeScore: true,
+          ignoreLocation: true
+        });
+
+        const fuseResults = fuse.search(searchQuery);
+        results = fuseResults.map(result => result.item);
+      }
     }
 
-    const structuredQuery = parseStructuredQuery(searchQuery);
+    return results.sort((a, b) => {
+      const aIsUntrackedAvailable = !a.isTracked && a.canSignup && !a.isJoined;
+      const bIsUntrackedAvailable = !b.isTracked && b.canSignup && !b.isJoined;
 
-    if (structuredQuery) {
-      let results = [...classes];
+      if (aIsUntrackedAvailable && !bIsUntrackedAvailable) return -1;
+      if (!aIsUntrackedAvailable && bIsUntrackedAvailable) return 1;
 
-      if (structuredQuery.className) {
-        const classFuse = new Fuse(results, {
-          keys: ['serviceName'],
-          threshold: 0.4,
-          includeScore: true
-        });
-        const classResults = classFuse.search(structuredQuery.className);
-        results = classResults.map(r => r.item);
-      }
-
-      if (structuredQuery.location && results.length > 0) {
-        const locationFuse = new Fuse(results, {
-          keys: ['locationName'],
-          threshold: 0.4,
-          includeScore: true
-        });
-        const locationResults = locationFuse.search(structuredQuery.location);
-        results = locationResults.map(r => r.item);
-      }
-
-      if (structuredQuery.instructor && results.length > 0) {
-        const instructorFuse = new Fuse(results, {
-          keys: ['trainerName'],
-          threshold: 0.4,
-          includeScore: true
-        });
-        const instructorResults = instructorFuse.search(structuredQuery.instructor);
-        results = instructorResults.map(r => r.item);
-      }
-
-      return results;
-    }
-
-    const fuse = new Fuse(classes, {
-      keys: [
-        { name: 'serviceName', weight: 2 },
-        { name: 'locationName', weight: 1.5 },
-        { name: 'trainerName', weight: 1 }
-      ],
-      threshold: 0.4,
-      includeScore: true,
-      ignoreLocation: true
+      return new Date(a.startTime) - new Date(b.startTime);
     });
-
-    const results = fuse.search(searchQuery);
-    return results.map(result => result.item);
   }, [classes, searchQuery]);
 
   if (!authenticated) {
@@ -251,9 +276,17 @@ function ClassBrowser({ authenticated }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filteredClasses.map((classItem) => (
-            <div key={classItem.id} className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow p-6">
+            <div key={classItem.id} className={`bg-white rounded-lg shadow hover:shadow-lg transition-shadow p-6 ${classItem.isJoined ? 'border-2 border-green-300' : ''}`}>
               <div className="mb-4">
-                <h3 className="text-lg font-semibold text-gray-900 mb-1">{classItem.serviceName}</h3>
+                <div className="flex items-start justify-between mb-1">
+                  <h3 className="text-lg font-semibold text-gray-900">{classItem.serviceName}</h3>
+                  {classItem.isJoined && (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      <CheckCircle className="w-3 h-3 mr-1" />
+                      Enrolled
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center text-sm text-gray-600 space-x-4">
                   {classItem.trainerName && (
                     <div className="flex items-center space-x-1">
@@ -287,7 +320,7 @@ function ClassBrowser({ authenticated }) {
                 <span className="text-sm text-gray-600">
                   Spots: {classItem.spotsAvailable}/{classItem.spotsTotal}
                 </span>
-                {classItem.canSignup && (
+                {!classItem.isJoined && classItem.canSignup && (
                   <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded">
                     Available
                   </span>
@@ -295,21 +328,49 @@ function ClassBrowser({ authenticated }) {
               </div>
 
               <div className="flex space-x-2">
-                <button
-                  onClick={() => setTrackingClass(classItem)}
-                  className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center justify-center space-x-2"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Track</span>
-                </button>
-                {classItem.canSignup && (
+                {classItem.isTracked ? (
+                  <button
+                    onClick={onNavigateToTracked}
+                    className="flex-1 px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 flex items-center justify-center space-x-2"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    <span>View in Tracked</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setTrackingClass(classItem)}
+                    className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center justify-center space-x-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Track</span>
+                  </button>
+                )}
+                {classItem.isJoined ? (
+                  <button
+                    onClick={() => cancelClass(classItem.id, classItem.serviceName)}
+                    disabled={cancellingClass === classItem.id}
+                    className="flex-1 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 disabled:opacity-50 flex items-center justify-center space-x-2"
+                  >
+                    {cancellingClass === classItem.id ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Cancelling...</span>
+                      </>
+                    ) : (
+                      <>
+                        <UserX className="w-4 h-4" />
+                        <span>Cancel Enrollment</span>
+                      </>
+                    )}
+                  </button>
+                ) : classItem.canSignup ? (
                   <button
                     onClick={() => signupNow(classItem.id)}
                     className="flex-1 px-4 py-2 bg-primary text-white rounded-lg hover:bg-blue-700 flex items-center justify-center"
                   >
                     <span>Sign Up Now</span>
                   </button>
-                )}
+                ) : null}
               </div>
             </div>
           ))}

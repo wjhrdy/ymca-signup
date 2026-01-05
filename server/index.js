@@ -83,6 +83,23 @@ app.get('/api/classes', async (req, res) => {
       });
     }
     
+    const trackedClasses = await db.getAllTrackedClasses();
+    
+    classes.forEach(cls => {
+      const classDate = new Date(cls.startTime);
+      const dayOfWeek = classDate.toLocaleDateString('en-US', { weekday: 'long' });
+      const startTime = classDate.toTimeString().substring(0, 5);
+      
+      const isTracked = trackedClasses.some(tracked => {
+        return tracked.service_id === cls.serviceId &&
+               tracked.location_id === cls.locationId &&
+               tracked.day_of_week === dayOfWeek &&
+               tracked.start_time === startTime;
+      });
+      
+      cls.isTracked = isTracked;
+    });
+    
     res.json(classes);
   } catch (error) {
     console.error('Fetch classes error:', error);

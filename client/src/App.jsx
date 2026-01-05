@@ -119,7 +119,7 @@ function App() {
           </div>
         </div>
 
-        {activeTab === 'browse' && <ClassBrowser authenticated={status?.authenticated} />}
+        {activeTab === 'browse' && <ClassBrowser authenticated={status?.authenticated} onNavigateToTracked={() => setActiveTab('tracked')} />}
         {activeTab === 'tracked' && <TrackedClasses />}
         {activeTab === 'logs' && <SignupLogs />}
       </div>

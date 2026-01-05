@@ -85,7 +85,7 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
     return classes;
   }
 
-  // Fetch user's enrolled classes using client_id filter
+  // Fetch user's enrolled classes using the bookings endpoint
   try {
     console.log(`Fetching enrolled classes for client_id: ${clientId}...`);
     
@@ -97,13 +97,12 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
       filter: [
         { by: 'status', with: ['Rescheduled', 'Scheduled', 'Reminded', 'Completed', 'Requested', 'Counted', 'Verified'] },
         { by: 'since', with: now.toISOString() },
-        { by: 'till', with: endDate.toISOString() },
-        { by: 'client_id', with: [clientId] }
+        { by: 'till', with: endDate.toISOString() }
       ]
     };
     
     const jsonParam = encodeURIComponent(JSON.stringify(filterObj));
-    const url = `${API_BASE_URL}/schedule/occurrences?all_service_categories=true&json=${jsonParam}`;
+    const url = `${API_BASE_URL}/schedule/occurrences/bookings?json=${jsonParam}`;
     
     const response = await axios.get(url, {
       headers: {
@@ -204,6 +203,12 @@ async function fetchClasses(sessionCookie, filters = {}) {
     if (occurrences.length > 0) {
       console.log('Sample occurrence data:', JSON.stringify(occurrences[0], null, 2));
       
+      // Log lap lane occurrences for debugging
+      const lapLanes = occurrences.filter(o => o.service_title?.includes('Lap Lane'));
+      if (lapLanes.length > 0) {
+        console.log('Lap Lane occurrence data:', JSON.stringify(lapLanes[0], null, 2));
+      }
+      
       const classes = occurrences.map((occurrence, index) => {
         try {
           const startTime = occurrence.occurs_at || occurrence.start_time;
@@ -236,6 +241,9 @@ async function fetchClasses(sessionCookie, filters = {}) {
             id: occurrence.id,
             serviceId: occurrence.service_id || occurrence.service?.id,
             serviceName: occurrence.service_title || occurrence.service?.name,
+            serviceCategoryId: occurrence.service_category_id,
+            serviceCategoryName: occurrence.service_category_name,
+            serviceType: occurrence.service_type,
             trainerId: occurrence.trainer_id || occurrence.trainer?.id,
             trainerName: occurrence.trainer_name || occurrence.trainer?.name,
             locationId: occurrence.location_id || occurrence.location?.id,
@@ -247,9 +255,15 @@ async function fetchClasses(sessionCookie, filters = {}) {
             spotsTotal,
             status: occurrence.status,
             isJoined: occurrence.is_joined,
+            isWaited: occurrence.is_waited,
+            isReadonly: occurrence.is_readonly,
             fullGroup: occurrence.full_group,
+            waitingListEnabled: occurrence.waiting_list_enabled,
+            positionOnWaitingList: occurrence.position_on_waiting_list,
+            totalOnWaitingList: occurrence.total_on_waiting_list,
             canSignup,
-            restrictToBookInAdvanceHours: occurrence.restrict_to_book_in_advance_time_in_hours
+            restrictToBookInAdvanceHours: occurrence.restrict_to_book_in_advance_time_in_hours,
+            lock_version: occurrence.lock_version
           };
         } catch (error) {
           console.error(`Error processing occurrence at index ${index}:`, error.message);
@@ -258,13 +272,20 @@ async function fetchClasses(sessionCookie, filters = {}) {
         }
       }).filter(c => c !== null);
       
+      // Filter out readonly services (lap lanes, pool reservations, etc.)
+      const filteredClasses = classes.filter(c => !c.isReadonly);
+      const readonlyCount = classes.length - filteredClasses.length;
+      if (readonlyCount > 0) {
+        console.log(`Filtered out ${readonlyCount} readonly services (pool lanes, etc.)`);
+      }
+      
       const verifyBookings = filters.verifyBookings !== false;
       if (verifyBookings) {
         const clientId = await getUserClientId(sessionCookie);
-        return await enrichClassesWithBookingStatus(sessionCookie, classes, clientId);
+        return await enrichClassesWithBookingStatus(sessionCookie, filteredClasses, clientId);
       }
       
-      return classes;
+      return filteredClasses;
     }
 
     console.log('No occurrences found in response, returning empty array');
@@ -301,7 +322,7 @@ async function getOccurrenceDetails(sessionCookie, occurrenceId) {
   }
 }
 
-async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, tryWaitlist = true) {
+async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, tryWaitlist = true, waitingListEnabled = true) {
   try {
     const csrfToken = await getCSRFToken(sessionCookie);
     
@@ -310,24 +331,28 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
     }
     
     // Try to get lock_version if not provided, but don't fail if we can't get it
-    if (!lockVersion) {
+    if (lockVersion === null || lockVersion === undefined) {
       try {
         const details = await getOccurrenceDetails(sessionCookie, occurrenceId);
-        if (details?.occurrence?.lock_version) {
+        if (details?.occurrence?.lock_version !== undefined) {
           lockVersion = details.occurrence.lock_version;
-          console.log(`Fetched lock_version: ${lockVersion}`);
+          console.log(`Fetched lock_version from details: ${lockVersion}`);
         } else {
           console.log('⚠️  lock_version not available from API, attempting signup anyway...');
         }
       } catch (error) {
         console.log(`⚠️  Could not fetch occurrence details (${error.message}), attempting signup without lock_version...`);
       }
+    } else {
+      console.log(`Using provided lock_version: ${lockVersion}`);
     }
     
-    const payload = lockVersion ? { lock_version: lockVersion } : {};
+    const payload = (lockVersion !== null && lockVersion !== undefined) ? { lock_version: lockVersion } : {};
     const formData = new URLSearchParams();
     formData.append('json', JSON.stringify(payload));
 
+    console.log(`Attempting to join occurrence ${occurrenceId} with payload:`, payload);
+    
     const response = await axios.post(
       `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/join`,
       formData.toString(),
@@ -346,11 +371,47 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
       }
     );
 
+    console.log('✓ Successfully joined class');
+    console.log('Response data:', JSON.stringify(response.data, null, 2));
     return response.data;
   } catch (error) {
-    if (tryWaitlist && error.response?.status === 422) {
-      console.log('Class full, trying waitlist...');
-      return await joinWaitlist(sessionCookie, occurrenceId);
+    const errorData = error.response?.data;
+    const errorMessage = errorData?.exception || errorData?.error || error.message;
+    const status = error.response?.status;
+    
+    console.error(`Join request failed with status ${status}:`, errorMessage);
+    console.error('Full error response:', JSON.stringify(errorData, null, 2));
+    
+    // Check if already enrolled
+    if (status === 422) {
+      if (errorMessage && (errorMessage.includes('already') || errorMessage.includes('enrolled') || errorMessage.includes('joined'))) {
+        console.log('ℹ️  Already enrolled in this class');
+        const alreadyEnrolledError = new Error('Already enrolled in this class');
+        alreadyEnrolledError.code = 'ALREADY_ENROLLED';
+        throw alreadyEnrolledError;
+      }
+      
+      // Class is full, try waitlist if enabled
+      if (tryWaitlist && waitingListEnabled) {
+        console.log('Class full, trying waitlist...');
+        try {
+          return await joinWaitlist(sessionCookie, occurrenceId);
+        } catch (waitlistError) {
+          // If waitlist fails with 404, might mean already enrolled or waitlist disabled
+          if (waitlistError.response?.status === 404) {
+            console.log('⚠️  Waitlist endpoint not found (404) - might be already enrolled or waitlist disabled');
+            const notAvailableError = new Error('Class full and waitlist not available');
+            notAvailableError.code = 'WAITLIST_NOT_AVAILABLE';
+            throw notAvailableError;
+          }
+          throw waitlistError;
+        }
+      } else if (tryWaitlist && !waitingListEnabled) {
+        console.log('⚠️  Class is full but waitlist is not enabled');
+        const notAvailableError = new Error('Class full and waitlist not enabled');
+        notAvailableError.code = 'WAITLIST_NOT_ENABLED';
+        throw notAvailableError;
+      }
     }
     throw error;
   }
@@ -385,10 +446,17 @@ async function joinWaitlist(sessionCookie, occurrenceId) {
       }
     );
 
-    console.log('Successfully joined waitlist');
+    console.log('✓ Successfully joined waitlist');
     return { ...response.data, waitlisted: true };
   } catch (error) {
-    console.error('Failed to join waitlist:', error.response?.data || error.message);
+    const errorData = error.response?.data;
+    const status = error.response?.status;
+    
+    if (status === 404) {
+      console.log('⚠️  Waitlist endpoint not found (404) - waitlist may be disabled or you may already be enrolled');
+    } else {
+      console.error('Failed to join waitlist:', errorData || error.message);
+    }
     throw error;
   }
 }

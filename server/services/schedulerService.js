@@ -1,6 +1,10 @@
 const classService = require('./classService');
 const db = require('../database');
 
+let cachedClasses = [];
+let lastFetchTime = null;
+const CACHE_DURATION_MS = 10 * 60 * 1000;
+
 /**
  * Check for classes that need signup and attempt to book them.
  * This function implements a retry mechanism: any class within its booking window
@@ -10,6 +14,11 @@ const db = require('../database');
  * 
  * This ensures that if the computer was asleep when the booking window opened,
  * the class will still be booked once the computer wakes up and the scheduler runs.
+ * 
+ * OPTIMIZATION: Only fetches from API when necessary:
+ * - When a booking window is approaching within 15 minutes
+ * - When cache is stale (>10 minutes old)
+ * - When we're in an active booking window and need fresh data
  */
 async function checkAndSignup(sessionCookie) {
   try {
@@ -17,25 +26,97 @@ async function checkAndSignup(sessionCookie) {
     const autoSignupClasses = trackedClasses.filter(c => c.auto_signup);
 
     if (autoSignupClasses.length === 0) {
+      console.log('No auto-signup classes tracked. Skipping scheduler run.');
       return;
     }
 
+    const now = new Date();
+    
+    // Calculate if we need to fetch: check if any booking window is within 15 minutes
+    let needsFetch = false;
+    let inActiveBookingWindow = false;
+    
+    for (const tracked of autoSignupClasses) {
+      const logs = await db.getSignupLogs(1000);
+      const successfulSignup = logs.find(log => 
+        log.occurrence_id && String(log.occurrence_id).includes(tracked.service_id) &&
+        log.status === 'success'
+      );
+      
+      if (successfulSignup) continue;
+      
+      // Estimate next booking window (this is approximate, real check needs API data)
+      const userPreferredHours = tracked.signup_hours_before || 46;
+      const estimatedNextClassTime = getNextOccurrence(tracked, now);
+      
+      if (estimatedNextClassTime) {
+        const hoursUntilClass = (estimatedNextClassTime.getTime() - now.getTime()) / (60 * 60 * 1000);
+        const signupWindowHours = Math.min(userPreferredHours, 48); // Conservative estimate
+        const hoursUntilWindow = hoursUntilClass - signupWindowHours;
+        const minutesUntilWindow = hoursUntilWindow * 60;
+        
+        // Check if we're within 15 minutes of a booking window or already in it
+        if (minutesUntilWindow <= 15) {
+          needsFetch = true;
+          if (hoursUntilWindow <= 0) {
+            inActiveBookingWindow = true;
+          }
+        }
+      }
+    }
+    
+    // Check cache validity
+    const cacheAge = lastFetchTime ? (now.getTime() - lastFetchTime.getTime()) : Infinity;
+    const cacheStale = cacheAge > CACHE_DURATION_MS;
+    
+    if (!needsFetch && !cacheStale) {
+      console.log(`Scheduler: No booking windows approaching. Skipping API fetch. Next check in 5 minutes.`);
+      return;
+    }
+    
+    if (cacheStale && needsFetch) {
+      console.log(`Scheduler: Booking window approaching. Fetching fresh data from API...`);
+    } else if (inActiveBookingWindow) {
+      console.log(`Scheduler: In active booking window. Fetching fresh data...`);
+    } else if (needsFetch) {
+      console.log(`Scheduler: Using cached data (${Math.floor(cacheAge / 1000)}s old)...`);
+    }
+    
     console.log(`Checking ${autoSignupClasses.length} auto-signup classes...`);
 
-    const now = new Date();
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + 7);
-
-    const allClasses = await classService.fetchClasses(sessionCookie, {
-      startDate: now.toISOString(),
-      endDate: endDate.toISOString()
-    });
+    let allClasses;
+    
+    // Only fetch if cache is stale or we're in/near a booking window
+    if (cacheStale || inActiveBookingWindow) {
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() + 7);
+      
+      // Skip enrollment verification during regular checks - only verify when actually attempting signup
+      allClasses = await classService.fetchClasses(sessionCookie, {
+        startDate: now.toISOString(),
+        endDate: endDate.toISOString(),
+        verifyBookings: false // Skip expensive enrollment verification call
+      });
+      
+      cachedClasses = allClasses;
+      lastFetchTime = now;
+      console.log(`Fetched ${allClasses.length} classes from API (verifyBookings=false)`);
+    } else {
+      allClasses = cachedClasses;
+      console.log(`Using ${allClasses.length} cached classes`);
+    }
 
     for (const tracked of autoSignupClasses) {
+      console.log(`\n📋 Checking tracked class: ${tracked.service_name}`);
+      console.log(`   Service ID: ${tracked.service_id}, Trainer: ${tracked.trainer_name || 'any'}, Location: ${tracked.location_name}`);
+      console.log(`   Day: ${tracked.day_of_week}, Time: ${tracked.start_time}`);
+      console.log(`   Match settings: trainer=${tracked.match_trainer}, exactTime=${tracked.match_exact_time}, tolerance=${tracked.time_tolerance}min`);
+      
       const matchingClasses = allClasses.filter(c => {
-        const serviceMatch = c.serviceId === tracked.service_id;
-        const trainerMatch = !tracked.trainer_id || c.trainerId === tracked.trainer_id;
-        const locationMatch = c.locationId === tracked.location_id;
+        // Use loose equality to handle string vs number comparison
+        const serviceMatch = String(c.serviceId) === String(tracked.service_id);
+        const trainerMatch = !tracked.match_trainer || !tracked.trainer_id || String(c.trainerId) === String(tracked.trainer_id);
+        const locationMatch = !tracked.location_id || String(c.locationId) === String(tracked.location_id);
         
         if (!serviceMatch || !trainerMatch || !locationMatch) {
           return false;
@@ -43,7 +124,7 @@ async function checkAndSignup(sessionCookie) {
 
         if (tracked.day_of_week) {
           const classDate = new Date(c.startTime);
-          const dayOfWeek = classDate.toLocaleDateString('en-US', { weekday: 'long' });
+          const dayOfWeek = classDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
           if (dayOfWeek !== tracked.day_of_week) {
             return false;
           }
@@ -51,9 +132,32 @@ async function checkAndSignup(sessionCookie) {
 
         if (tracked.start_time) {
           const classDate = new Date(c.startTime);
-          const classTime = classDate.toTimeString().substring(0, 5);
-          if (classTime !== tracked.start_time) {
-            return false;
+          if (tracked.match_exact_time) {
+            // Exact time match
+            const classTime = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+            if (classTime !== tracked.start_time) {
+              return false;
+            }
+          } else {
+            // Fuzzy time match with tolerance
+            const [targetHour, targetMin] = tracked.start_time.split(':').map(Number);
+            const targetMinutes = targetHour * 60 + targetMin;
+            
+            // Get class time in America/New_York timezone
+            const classTimeStr = classDate.toLocaleTimeString('en-US', { 
+              hour: '2-digit', 
+              minute: '2-digit', 
+              hour12: false, 
+              timeZone: 'America/New_York' 
+            });
+            const [classHour, classMin] = classTimeStr.split(':').map(Number);
+            const classMinutes = classHour * 60 + classMin;
+            
+            const diff = Math.abs(classMinutes - targetMinutes);
+            const tolerance = tracked.time_tolerance || 15;
+            if (diff > tolerance) {
+              return false;
+            }
           }
         }
 
@@ -67,13 +171,31 @@ async function checkAndSignup(sessionCookie) {
         console.log(`\nEvaluating class: ${classToSignup.serviceName} at ${classTime.toISOString()}`);
         console.log(`  Hours until class: ${hoursUntilClass.toFixed(2)}`);
         console.log(`  canSignup: ${classToSignup.canSignup}`);
-        console.log(`  actions: ${JSON.stringify(classToSignup.actions)}`);
+        console.log(`  isJoined: ${classToSignup.isJoined}`);
+        console.log(`  isWaited: ${classToSignup.isWaited}`);
+        console.log(`  fullGroup: ${classToSignup.fullGroup}`);
+        console.log(`  waitingListEnabled: ${classToSignup.waitingListEnabled}`);
 
-        const signupHoursBefore = classToSignup.restrictToBookInAdvanceHours || tracked.signup_hours_before || 46;
+        // User preference for when to sign up
+        const userPreferredHours = tracked.signup_hours_before || 46;
+        
+        // YMCA restriction - can't book earlier than this window
+        // If 0 or undefined, there's no restriction (can book anytime)
+        const ymcaRestrictionHours = classToSignup.restrictToBookInAdvanceHours || 0;
+        
+        // Effective signup time: user's preference, but not earlier than YMCA allows
+        // If no YMCA restriction (0), use user preference
+        // Otherwise use minimum of user preference and YMCA restriction
+        const signupHoursBefore = ymcaRestrictionHours > 0 
+          ? Math.min(userPreferredHours, ymcaRestrictionHours)
+          : userPreferredHours;
+        
         const signupTime = new Date(classTime.getTime() - (signupHoursBefore * 60 * 60 * 1000));
         const hoursUntilSignupWindow = (signupTime.getTime() - now.getTime()) / (60 * 60 * 1000);
 
-        console.log(`  signupHoursBefore: ${signupHoursBefore}`);
+        console.log(`  userPreferredHours: ${userPreferredHours}`);
+        console.log(`  ymcaRestrictionHours: ${ymcaRestrictionHours}`);
+        console.log(`  effectiveSignupHoursBefore: ${signupHoursBefore}`);
         console.log(`  signupTime: ${signupTime.toISOString()}`);
         console.log(`  hoursUntilSignupWindow: ${hoursUntilSignupWindow.toFixed(2)}`);
         console.log(`  now >= signupTime: ${now >= signupTime}`);
@@ -120,29 +242,20 @@ async function checkAndSignup(sessionCookie) {
 
         console.log(`  ✅ ATTEMPTING TO BOOK: ${classToSignup.serviceName} at ${classTime}`);
         
-        // For retry attempts, fetch fresh occurrence details to get latest lock_version
-        let lockVersion = classToSignup.lock_version;
-        if (failedAttempts.length > 0 && !lockVersion) {
-          console.log(`  🔄 Fetching fresh occurrence details for retry...`);
-          try {
-            const freshDetails = await classService.getOccurrenceDetails(sessionCookie, classToSignup.id);
-            if (freshDetails?.occurrence?.lock_version) {
-              lockVersion = freshDetails.occurrence.lock_version;
-              console.log(`  ✓ Retrieved fresh lock_version: ${lockVersion}`);
-            }
-          } catch (error) {
-            console.log(`  ⚠️  Could not fetch fresh details: ${error.message}`);
-          }
-        }
-        
-        if (lockVersion !== undefined) {
-          console.log(`  Using lock_version: ${lockVersion}`);
-        } else {
-          console.log(`  ⚠️  No lock_version available`);
-        }
+        // IMPORTANT: Never use cached lock_version - it changes frequently
+        // Always let signupForClass fetch fresh occurrence details to get latest lock_version
+        console.log(`  🔄 Will fetch fresh lock_version immediately before signup...`);
         
         try {
-          await classService.signupForClass(sessionCookie, classToSignup.id, lockVersion);
+          const result = await classService.signupForClass(
+            sessionCookie, 
+            classToSignup.id, 
+            null, // Always pass null to force fresh lock_version fetch
+            true, // tryWaitlist
+            classToSignup.waitingListEnabled
+          );
+          
+          const statusMessage = result.waitlisted ? 'Joined waitlist' : 'Successfully signed up';
           
           await db.addSignupLog({
             occurrenceId: classToSignup.id,
@@ -151,11 +264,36 @@ async function checkAndSignup(sessionCookie) {
             locationName: classToSignup.locationName,
             classTime: classToSignup.startTime,
             status: 'success',
-            errorMessage: null
+            errorMessage: result.waitlisted ? 'Joined waitlist' : null
           });
 
-          console.log(`  ✓ Successfully signed up for: ${classToSignup.serviceName}`);
+          console.log(`  ✓ ${statusMessage}: ${classToSignup.serviceName}`);
         } catch (error) {
+          // Handle already enrolled case - not a failure
+          if (error.code === 'ALREADY_ENROLLED') {
+            console.log(`  ℹ️  Already enrolled: ${classToSignup.serviceName}`);
+            // Don't log as failed, just skip
+            continue;
+          }
+          
+          // Handle waitlist not available/enabled - log but don't retry
+          if (error.code === 'WAITLIST_NOT_AVAILABLE' || error.code === 'WAITLIST_NOT_ENABLED') {
+            const message = error.code === 'WAITLIST_NOT_ENABLED' 
+              ? 'Class full, waitlist not enabled'
+              : 'Class full, waitlist not available';
+            console.log(`  ⚠️  ${message}: ${classToSignup.serviceName}`);
+            await db.addSignupLog({
+              occurrenceId: classToSignup.id,
+              serviceName: classToSignup.serviceName,
+              trainerName: classToSignup.trainerName,
+              locationName: classToSignup.locationName,
+              classTime: classToSignup.startTime,
+              status: 'failed',
+              errorMessage: message
+            });
+            continue;
+          }
+          
           console.error(`  ✗ Failed to sign up for: ${classToSignup.serviceName}`, error.message);
           
           await db.addSignupLog({
@@ -174,6 +312,41 @@ async function checkAndSignup(sessionCookie) {
     console.error('Scheduler check error:', error);
     throw error;
   }
+}
+
+/**
+ * Estimate the next occurrence of a tracked class based on day of week and time.
+ * This is a rough estimate used to determine if we should fetch from the API.
+ */
+function getNextOccurrence(tracked, fromDate) {
+  if (!tracked.day_of_week || !tracked.start_time) {
+    return null;
+  }
+  
+  const dayMap = {
+    'Sunday': 0, 'Monday': 1, 'Tuesday': 2, 'Wednesday': 3,
+    'Thursday': 4, 'Friday': 5, 'Saturday': 6
+  };
+  
+  const targetDay = dayMap[tracked.day_of_week];
+  if (targetDay === undefined) return null;
+  
+  const [hours, minutes] = tracked.start_time.split(':').map(Number);
+  if (isNaN(hours) || isNaN(minutes)) return null;
+  
+  // Find next occurrence of this day/time
+  const next = new Date(fromDate);
+  next.setHours(hours, minutes, 0, 0);
+  
+  const currentDay = next.getDay();
+  let daysUntil = targetDay - currentDay;
+  
+  if (daysUntil < 0 || (daysUntil === 0 && next <= fromDate)) {
+    daysUntil += 7;
+  }
+  
+  next.setDate(next.getDate() + daysUntil);
+  return next;
 }
 
 module.exports = {
