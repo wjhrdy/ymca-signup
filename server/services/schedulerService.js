@@ -9,12 +9,18 @@ const CACHE_DURATION_MS = 10 * 60 * 1000;
 /**
  * Check for classes that need signup and attempt to book them.
  * This function implements a retry mechanism: any class within its booking window
- * will be retried on every scheduler run until either:
+ * will be retried on every scheduler run (every 5 minutes) until either:
  * 1. Signup succeeds, or
  * 2. The class time passes
  * 
  * This ensures that if the computer was asleep when the booking window opened,
  * the class will still be booked once the computer wakes up and the scheduler runs.
+ * 
+ * WAITLIST MONITORING: If a class is full and the waitlist is also full, the app
+ * will continuously retry every 5 minutes until either:
+ * - A spot opens on the waitlist and signup succeeds
+ * - The class time passes
+ * This handles scenarios where classes are added early or within the signup window.
  * 
  * OPTIMIZATION: Only fetches from API when necessary:
  * - When a booking window is approaching within 15 minutes
@@ -92,16 +98,31 @@ async function checkAndSignup(sessionCookie) {
       const endDate = new Date();
       endDate.setDate(endDate.getDate() + 7);
       
+      // OPTIMIZATION: Extract unique service IDs and trainer IDs from tracked classes
+      // This dramatically reduces API payload by only fetching relevant classes
+      const serviceIds = [...new Set(autoSignupClasses.map(c => c.service_id).filter(Boolean))];
+      
+      // Only include trainer IDs for classes that require specific trainer matching
+      const trainerIds = [...new Set(
+        autoSignupClasses
+          .filter(c => c.match_trainer && c.trainer_id)
+          .map(c => c.trainer_id)
+      )];
+      
+      logger.debug(`Fetching classes for ${serviceIds.length} services${trainerIds.length > 0 ? ` and ${trainerIds.length} trainers` : ''}`);
+      
       // Skip enrollment verification during regular checks - only verify when actually attempting signup
       allClasses = await classService.fetchClasses(sessionCookie, {
         startDate: now.toISOString(),
         endDate: endDate.toISOString(),
+        serviceIds: serviceIds,  // OPTIMIZATION: Only fetch tracked services
+        trainerIds: trainerIds.length > 0 ? trainerIds : undefined,  // OPTIMIZATION: Only fetch specific trainers if required
         verifyBookings: false // Skip expensive enrollment verification call
       });
       
       cachedClasses = allClasses;
       lastFetchTime = now;
-      logger.debug(`Fetched ${allClasses.length} classes from API (verifyBookings=false)`);
+      logger.info(`✅ Optimized fetch: Retrieved ${allClasses.length} classes (filtered by ${serviceIds.length} services${trainerIds.length > 0 ? ` & ${trainerIds.length} trainers` : ''})`);
     } else {
       allClasses = cachedClasses;
       logger.debug(`Using ${allClasses.length} cached classes`);
@@ -274,6 +295,47 @@ async function checkAndSignup(sessionCookie) {
           if (error.code === 'ALREADY_ENROLLED') {
             logger.info(`  ℹ️  Already enrolled: ${classToSignup.serviceName}`);
             // Don't log as failed, just skip
+            continue;
+          }
+          
+          // Handle already on waitlist - mark as success
+          if (error.code === 'ALREADY_ON_WAITLIST') {
+            logger.info(`  ℹ️  Already on waitlist: ${classToSignup.serviceName}`);
+            await db.addSignupLog({
+              occurrenceId: classToSignup.id,
+              serviceName: classToSignup.serviceName,
+              trainerName: classToSignup.trainerName,
+              locationName: classToSignup.locationName,
+              classTime: classToSignup.startTime,
+              status: 'success',
+              errorMessage: 'Already on waitlist'
+            });
+            continue;
+          }
+          
+          // Handle waitlist full - RETRY every scheduler run (every 5 minutes)
+          if (error.code === 'WAITLIST_FULL') {
+            const lastAttemptTime = failedAttempts.length > 0 
+              ? new Date(failedAttempts[failedAttempts.length - 1].timestamp)
+              : null;
+            const minutesSinceLastAttempt = lastAttemptTime 
+              ? (now - lastAttemptTime) / (60 * 1000) 
+              : Infinity;
+            
+            logger.warn(`  ⚠️  Waitlist is full - will retry in 5 minutes (attempt #${failedAttempts.length + 1})`);
+            
+            // Only log if it's been at least 4 minutes since last log (to avoid spam)
+            if (minutesSinceLastAttempt >= 4 || failedAttempts.length === 0) {
+              await db.addSignupLog({
+                occurrenceId: classToSignup.id,
+                serviceName: classToSignup.serviceName,
+                trainerName: classToSignup.trainerName,
+                locationName: classToSignup.locationName,
+                classTime: classToSignup.startTime,
+                status: 'failed',
+                errorMessage: 'Waitlist full - will retry'
+              });
+            }
             continue;
           }
           

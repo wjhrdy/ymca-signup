@@ -7,12 +7,16 @@ import TrackClassModal from './TrackClassModal';
 function ClassBrowser({ authenticated, onNavigateToTracked }) {
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [trackingClass, setTrackingClass] = useState(null);
   const [cancellingClass, setCancellingClass] = useState(null);
+  const [isSearchMode, setIsSearchMode] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [offset, setOffset] = useState(0);
   const [filters, setFilters] = useState({
     startDate: new Date().toISOString().split('T')[0],
-    endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]  // 30 days for more scroll opportunities
   });
 
   useEffect(() => {
@@ -20,17 +24,95 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
       fetchClasses();
     }
   }, [authenticated]);
+  
+  useEffect(() => {
+    const handleScroll = () => {
+      if (isSearchMode || loadingMore || !hasMore) return;
+      
+      const scrollTop = window.scrollY;
+      const windowHeight = window.innerHeight;
+      const documentHeight = document.documentElement.scrollHeight;
+      
+      // Load more when user is 300px from bottom
+      if (scrollTop + windowHeight >= documentHeight - 300) {
+        loadMoreClasses();
+      }
+    };
+    
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [classes, loadingMore, hasMore, isSearchMode]);
 
-  const fetchClasses = async () => {
+  const fetchClasses = async (forSearch = false, reset = true) => {
     setLoading(true);
+    if (reset) {
+      setOffset(0);
+      setHasMore(true);
+    }
+    
     try {
-      const response = await api.get('/api/classes', { params: filters });
+      const params = { ...filters };
+      
+      // OPTIMIZATION: Load limited classes initially for fast page load
+      // When searching, fetch full month for comprehensive search
+      if (forSearch) {
+        // Expand to 30 days for search
+        const searchEndDate = new Date();
+        searchEndDate.setDate(searchEndDate.getDate() + 30);
+        params.endDate = searchEndDate.toISOString().split('T')[0];
+        // No limit - fetch all classes in the month
+        console.log('🔍 Search mode: Fetching full month of classes (30 days)');
+      } else if (!isSearchMode) {
+        // Initial load - limit to 50 classes for speed
+        params.limit = 50;
+        console.log('⚡ Initial load: Fetching first 50 classes');
+      }
+      
+      const response = await api.get('/api/classes', { params });
       setClasses(response.data);
+      
+      if (forSearch) {
+        setIsSearchMode(true);
+        console.log(`✅ Loaded ${response.data.length} classes for comprehensive search`);
+      } else {
+        setOffset(50);
+        // Assume more classes available unless we got zero (server filters can reduce count)
+        setHasMore(response.data.length > 0);
+        console.log(`📊 Initial load: ${response.data.length} classes, hasMore: true`);
+      }
     } catch (error) {
       console.error('Failed to fetch classes:', error);
       alert('Failed to fetch classes: ' + (error.response?.data?.error || error.message));
     } finally {
       setLoading(false);
+    }
+  };
+  
+  const loadMoreClasses = async () => {
+    if (loadingMore || !hasMore || isSearchMode) return;
+    
+    setLoadingMore(true);
+    try {
+      const params = { ...filters, limit: 50, offset };
+      console.log(`📄 Loading more classes (offset: ${offset})`);
+      
+      const response = await api.get('/api/classes', { params });
+      
+      if (response.data.length > 0) {
+        setClasses(prev => [...prev, ...response.data]);
+        setOffset(prev => prev + 50);  // Always increment by page size, not response length
+        // Keep loading - server filtering (readonly removal) can reduce count below 50
+        // Only stop when we get 0 results
+        setHasMore(true);
+        console.log(`✅ Loaded ${response.data.length} more classes (offset now ${offset + 50}), will try next batch`);
+      } else {
+        setHasMore(false);
+        console.log('🏁 No more classes to load (got 0 results)');
+      }
+    } catch (error) {
+      console.error('Failed to load more classes:', error);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -198,15 +280,8 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
       }
     }
 
-    return results.sort((a, b) => {
-      const aIsUntrackedAvailable = !a.isTracked && a.canSignup && !a.isJoined;
-      const bIsUntrackedAvailable = !b.isTracked && b.canSignup && !b.isJoined;
-
-      if (aIsUntrackedAvailable && !bIsUntrackedAvailable) return -1;
-      if (!aIsUntrackedAvailable && bIsUntrackedAvailable) return 1;
-
-      return new Date(a.startTime) - new Date(b.startTime);
-    });
+    // No client-side sorting - API handles all sorting by occurs_at, location, service_name
+    return results;
   }, [classes, searchQuery]);
 
   if (!authenticated) {
@@ -233,13 +308,30 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
         </div>
 
         <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Search Classes</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Search Classes
+            {isSearchMode && (
+              <span className="ml-2 text-xs text-gray-500">(searching 30 days)</span>
+            )}
+          </label>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                const query = e.target.value;
+                setSearchQuery(query);
+                
+                // When user starts typing, fetch full month if not already in search mode
+                if (query.trim() && !isSearchMode) {
+                  fetchClasses(true);
+                }
+                // When user clears search, reset to normal mode on next refresh
+                if (!query.trim() && isSearchMode) {
+                  setIsSearchMode(false);
+                }
+              }}
               placeholder="Try: 'at downtown', 'with sarah', or 'yoga at downtown with sarah'"
               className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
             />
@@ -386,6 +478,19 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
       {!loading && classes.length > 0 && filteredClasses.length === 0 && (
         <div className="text-center py-12 bg-white rounded-lg shadow">
           <p className="text-gray-500">No classes match your search. Try a different search term.</p>
+        </div>
+      )}
+      
+      {loadingMore && (
+        <div className="text-center py-8">
+          <RefreshCw className="w-6 h-6 text-primary animate-spin mx-auto" />
+          <p className="mt-2 text-sm text-gray-500">Loading more classes...</p>
+        </div>
+      )}
+      
+      {!loading && !loadingMore && !hasMore && classes.length > 0 && !isSearchMode && (
+        <div className="text-center py-8 bg-white rounded-lg shadow">
+          <p className="text-gray-500">No more classes to load</p>
         </div>
       )}
 

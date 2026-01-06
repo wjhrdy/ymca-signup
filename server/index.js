@@ -41,12 +41,28 @@ initializeDatabase().then(() => {
   logger.info('Database initialization complete');
 });
 
-app.get('/api/status', (req, res) => {
-  res.json({ 
-    status: 'running', 
-    authenticated: !!sessionCookie,
-    timestamp: new Date().toISOString()
-  });
+app.get('/api/status', async (req, res) => {
+  try {
+    const status = { 
+      status: 'running', 
+      authenticated: !!sessionCookie,
+      timestamp: new Date().toISOString()
+    };
+    
+    if (sessionCookie) {
+      try {
+        const userData = await classService.getUserProfile(sessionCookie);
+        status.user = userData;
+      } catch (error) {
+        logger.warn('Failed to fetch user profile:', error.message);
+      }
+    }
+    
+    res.json(status);
+  } catch (error) {
+    logger.error('Status error:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -70,8 +86,14 @@ app.get('/api/classes', async (req, res) => {
       logger.info('Session saved to database');
     }
     
-    const { startDate, endDate, locationId } = req.query;
-    const classes = await classService.fetchClasses(sessionCookie, { startDate, endDate, locationId });
+    const { startDate, endDate, locationId, limit, offset } = req.query;
+    const classes = await classService.fetchClasses(sessionCookie, { 
+      startDate, 
+      endDate, 
+      locationId,
+      limit: limit ? parseInt(limit, 10) : undefined,  // OPTIMIZATION: Support pagination limit
+      offset: offset ? parseInt(offset, 10) : undefined  // OPTIMIZATION: Support infinite scroll offset
+    });
     
     if (classes.length > 0) {
       logger.debug('Sample class data (first item):', {
@@ -115,10 +137,67 @@ app.get('/api/classes', async (req, res) => {
 
 app.get('/api/tracked-classes', async (req, res) => {
   try {
-    const classes = await db.getAllTrackedClasses();
-    res.json(classes);
+    const trackedClasses = await db.getAllTrackedClasses();
+    
+    if (!sessionCookie) {
+      sessionCookie = await authService.login();
+      await db.saveSession(sessionCookie);
+    }
+    
+    const startDate = new Date();
+    const endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    
+    const upcomingClasses = await classService.fetchClasses(sessionCookie, { 
+      startDate: startDate.toISOString().split('T')[0], 
+      endDate: endDate.toISOString().split('T')[0],
+      skipLocationFilter: true
+    });
+    
+    const classesWithNextOccurrence = trackedClasses.map(tracked => {
+      const matchingClasses = upcomingClasses.filter(cls => {
+        if (String(cls.serviceId) !== String(tracked.service_id)) return false;
+        
+        if (tracked.location_id && cls.locationId) {
+          if (String(cls.locationId) !== String(tracked.location_id)) return false;
+        } else if (tracked.location_name && cls.locationName) {
+          if (cls.locationName !== tracked.location_name) return false;
+        }
+        
+        const classDate = new Date(cls.startTime);
+        const classDayOfWeek = classDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
+        if (classDayOfWeek !== tracked.day_of_week) return false;
+        
+        if (tracked.match_trainer === 1 && String(cls.trainerId) !== String(tracked.trainer_id)) return false;
+        
+        if (tracked.match_exact_time === 1) {
+          const classTime = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+          if (classTime !== tracked.start_time) return false;
+        } else if (tracked.time_tolerance !== undefined && tracked.time_tolerance !== null) {
+          const [targetHour, targetMin] = tracked.start_time.split(':').map(Number);
+          const targetMinutes = targetHour * 60 + targetMin;
+          const classMinutes = classDate.getHours() * 60 + classDate.getMinutes();
+          const diff = Math.abs(classMinutes - targetMinutes);
+          if (diff > tracked.time_tolerance) return false;
+        }
+        
+        return true;
+      });
+      
+      matchingClasses.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+      
+      return {
+        ...tracked,
+        next_occurrence: matchingClasses.length > 0 ? matchingClasses[0].startTime : null
+      };
+    });
+    
+    res.json(classesWithNextOccurrence);
   } catch (error) {
     logger.error('Get tracked classes error:', error);
+    if (error.message.includes('401') || error.response?.status === 401) {
+      sessionCookie = null;
+      await db.clearSession();
+    }
     res.status(500).json({ error: error.message });
   }
 });
@@ -143,16 +222,27 @@ app.post('/api/tracked-classes/preview', async (req, res) => {
     const startDate = new Date();
     const endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     
-    // Don't apply location filter at API level - let client-side filtering handle it
-    // This avoids issues with child location IDs (e.g., location 36 is Poyner Studio 2,
-    // but the API only recognizes parent location 24 for Poyner YMCA)
-    const classes = await classService.fetchClasses(sessionCookie, { 
+    // OPTIMIZATION: Use API-level filtering to dramatically reduce payload size
+    // Instead of fetching ALL classes and filtering client-side, we filter by service_id at the API
+    // This reduces the response from potentially 500+ classes to just 5-20 matching occurrences
+    const fetchParams = {
       startDate: startDate.toISOString().split('T')[0], 
       endDate: endDate.toISOString().split('T')[0],
-      skipLocationFilter: true
-    });
+      serviceIds: [serviceId],  // OPTIMIZATION: Only fetch this specific service
+      skipLocationFilter: true   // Keep this to avoid sub-location issues
+    };
     
-    logger.debug(`Fetched ${classes.length} classes from API with verified enrollment status`);
+    // OPTIMIZATION: If matching specific trainer, add trainer filter to API call
+    if (matchTrainer && trainerId) {
+      fetchParams.trainerIds = [trainerId];
+      logger.debug(`Optimized preview: Filtering by service ${serviceId} and trainer ${trainerId}`);
+    } else {
+      logger.debug(`Optimized preview: Filtering by service ${serviceId} only`);
+    }
+    
+    const classes = await classService.fetchClasses(sessionCookie, fetchParams);
+    
+    logger.debug(`Optimized fetch: Retrieved ${classes.length} classes (filtered by service_id at API level)`);
     
     if (classes.length > 0) {
       logger.debug('Sample class:', {

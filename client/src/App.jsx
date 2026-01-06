@@ -52,12 +52,32 @@ function App() {
               </div>
             </div>
             <div className="flex items-center space-x-4">
-              {status && (
-                <div className="flex items-center space-x-2">
-                  <div className={`w-3 h-3 rounded-full ${status.authenticated ? 'bg-green-500' : 'bg-red-500'}`} />
-                  <span className="text-sm text-gray-600">
-                    {status.authenticated ? 'Authenticated' : 'Not authenticated'}
+              {status?.authenticated && status?.user ? (
+                <div className="flex items-center space-x-3">
+                  {status.user.imageUrl ? (
+                    <img 
+                      src={status.user.imageUrl} 
+                      alt={`${status.user.firstName} ${status.user.lastName}`}
+                      className="w-10 h-10 rounded-full object-cover border-2 border-gray-200"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center font-semibold border-2 border-gray-200">
+                      {status.user.firstName?.charAt(0)}{status.user.lastName?.charAt(0)}
+                    </div>
+                  )}
+                  <span className="text-sm font-medium text-gray-700">
+                    {status.user.firstName} {status.user.lastName?.charAt(0)}.
                   </span>
+                </div>
+              ) : status?.authenticated ? (
+                <div className="flex items-center space-x-2">
+                  <div className="w-3 h-3 rounded-full bg-green-500" />
+                  <span className="text-sm text-gray-600">Authenticated</span>
+                </div>
+              ) : (
+                <div className="flex items-center space-x-2">
+                  <div className="w-3 h-3 rounded-full bg-red-500" />
+                  <span className="text-sm text-gray-600">Not authenticated</span>
                 </div>
               )}
               {!status?.authenticated && (
@@ -113,7 +133,7 @@ function App() {
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
-                Signup Logs
+                Booked Classes
               </button>
             </nav>
           </div>

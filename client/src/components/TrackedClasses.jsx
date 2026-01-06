@@ -195,7 +195,11 @@ function TrackedClasses() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4">
-          {classes.map((classItem) => (
+          {[...classes].sort((a, b) => {
+            const dateA = a.next_occurrence ? new Date(a.next_occurrence) : new Date(8640000000000000);
+            const dateB = b.next_occurrence ? new Date(b.next_occurrence) : new Date(8640000000000000);
+            return dateA - dateB;
+          }).map((classItem) => (
             <div key={classItem.id} className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow p-6">
               {editingId === classItem.id ? (
                 <div className="space-y-4">
@@ -302,7 +306,9 @@ function TrackedClasses() {
                     {classItem.start_time && (
                       <div className="flex items-center text-sm text-gray-600">
                         <Clock className="w-4 h-4 mr-2" />
-                        <span>{classItem.start_time}</span>
+                        <span>
+                          {new Date(`2000-01-01T${classItem.start_time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
                         {classItem.match_exact_time === 0 && classItem.time_tolerance && (
                           <span className="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs rounded">
                             ±{classItem.time_tolerance}min

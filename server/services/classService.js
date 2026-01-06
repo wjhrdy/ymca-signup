@@ -102,6 +102,15 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
       ]
     };
     
+    // OPTIMIZATION: Filter by service IDs to reduce payload when checking specific classes
+    const uniqueServiceIds = [...new Set(classes.map(c => c.serviceId).filter(Boolean))];
+    if (uniqueServiceIds.length > 0 && uniqueServiceIds.length < 20) {
+      // Only add service_id filter if we have a reasonable number of services
+      // This dramatically reduces the response size for targeted queries
+      filterObj.filter.push({ by: 'service_id', with: uniqueServiceIds });
+      logger.debug(`Optimized booking check: Filtering by ${uniqueServiceIds.length} service IDs`);
+    }
+    
     const jsonParam = encodeURIComponent(JSON.stringify(filterObj));
     const url = `${API_BASE_URL}/schedule/occurrences/bookings?json=${jsonParam}`;
     
@@ -117,7 +126,7 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
     const enrolledClasses = response.data?.data || [];
     const enrolledOccurrenceIds = new Set(enrolledClasses.map(c => c.id));
     
-    logger.debug(`Found ${enrolledClasses.length} enrolled classes. IDs:`, Array.from(enrolledOccurrenceIds).slice(0, 10));
+    logger.debug(`Found ${enrolledClasses.length} enrolled classes (filtered by ${uniqueServiceIds.length} services). IDs:`, Array.from(enrolledOccurrenceIds).slice(0, 10));
     
     classes.forEach(cls => {
       const actuallyEnrolled = enrolledOccurrenceIds.has(cls.id);
@@ -178,6 +187,33 @@ async function fetchClasses(sessionCookie, filters = {}) {
     } else {
       logger.debug('No location filter applied - fetching from ALL locations');
     }
+    
+    // OPTIMIZATION: Filter by specific service IDs (e.g., from tracked classes)
+    if (filters.serviceIds && filters.serviceIds.length > 0) {
+      logger.debug(`Applying service_id filter: ${filters.serviceIds.join(', ')}`);
+      filterObj.filter.push({ by: 'service_id', with: filters.serviceIds });
+    }
+    
+    // OPTIMIZATION: Filter by specific trainer IDs (optional - some classes don't require specific trainer)
+    if (filters.trainerIds && filters.trainerIds.length > 0) {
+      logger.debug(`Applying trainer_id filter: ${filters.trainerIds.join(', ')}`);
+      filterObj.filter.push({ by: 'trainer_id', with: filters.trainerIds });
+    }
+    
+    // OPTIMIZATION: Add pagination limit if specified
+    if (filters.limit && filters.limit > 0) {
+      const start = filters.offset || 0;
+      filterObj.limit = { start: start, count: filters.limit };
+      logger.debug(`Applying pagination: start=${start}, count=${filters.limit}`);
+    }
+    
+    // Multi-level sorting: occurs_at (primary), location_name (secondary), service_title (tertiary)
+    // Using sorters object for multi-level sorting support
+    filterObj.sorters = {
+      occurs_at: true,        // true = ascending
+      location_name: true,
+      service_title: true
+    };
 
     const jsonParam = encodeURIComponent(JSON.stringify(filterObj));
     const url = `${API_BASE_URL}/schedule/occurrences?all_service_categories=true&json=${jsonParam}`;
@@ -451,13 +487,29 @@ async function joinWaitlist(sessionCookie, occurrenceId) {
     return { ...response.data, waitlisted: true };
   } catch (error) {
     const errorData = error.response?.data;
+    const errorMessage = errorData?.exception || errorData?.error || error.message;
     const status = error.response?.status;
     
     if (status === 404) {
       logger.warn('⚠️  Waitlist endpoint not found (404) - waitlist may be disabled or you may already be enrolled');
-    } else {
-      logger.error('Failed to join waitlist:', errorData || error.message);
+      const notAvailableError = new Error('Waitlist not available');
+      notAvailableError.code = 'WAITLIST_NOT_AVAILABLE';
+      throw notAvailableError;
+    } else if (status === 422) {
+      if (errorMessage && errorMessage.toLowerCase().includes('full')) {
+        logger.warn('⚠️  Waitlist is full - will retry');
+        const fullError = new Error('Waitlist is full');
+        fullError.code = 'WAITLIST_FULL';
+        throw fullError;
+      } else if (errorMessage && (errorMessage.toLowerCase().includes('already') || errorMessage.toLowerCase().includes('waited'))) {
+        logger.info('ℹ️  Already on waitlist');
+        const alreadyError = new Error('Already on waitlist');
+        alreadyError.code = 'ALREADY_ON_WAITLIST';
+        throw alreadyError;
+      }
     }
+    
+    logger.error('Failed to join waitlist:', errorData || error.message);
     throw error;
   }
 }
@@ -834,10 +886,48 @@ async function autoBookClass(sessionCookie, profile, options = {}) {
   }
 }
 
+async function getUserProfile(sessionCookie) {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/users/clients/linked?include_self=true&json=${encodeURIComponent(JSON.stringify({ limit: { start: 0, count: 10 } }))}`, {
+      headers: {
+        'Cookie': sessionCookie,
+        'Accept': '*/*',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    });
+    
+    const clients = response.data?.data || response.data?.clients || [];
+    if (clients.length > 0) {
+      const user = clients[0];
+      
+      // API returns title (full name), description (email), image_url
+      const fullName = user.title || '';
+      const nameParts = fullName.trim().split(/\s+/);
+      const firstName = nameParts[0] || 'User';
+      const lastName = nameParts.slice(1).join(' ') || '';
+      
+      return {
+        id: user.id,
+        firstName,
+        lastName,
+        email: user.description || '',
+        imageUrl: user.image_url || null
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    logger.error('Error fetching user profile:', error.message);
+    return null;
+  }
+}
+
 module.exports = {
   fetchClasses,
   enrichClassesWithBookingStatus,
   getUserClientId,
+  getUserProfile,
   getOccurrenceDetails,
   signupForClass,
   joinWaitlist,
