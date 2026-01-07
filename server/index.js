@@ -26,10 +26,6 @@ app.use(cors({
 }));
 app.use(bodyParser.json());
 
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
 let sessionCookie = null;
 let dbReady = false;
 
@@ -62,8 +58,10 @@ async function initializeDatabase() {
   });
 }
 
-initializeDatabase().then(async () => {
+async function startServer() {
+  await initializeDatabase();
   logger.info('Database initialization complete');
+  
   appConfig.setDatabase(db);
   await appConfig.loadConfig();
   logger.info('Configuration initialization complete');
@@ -79,132 +77,137 @@ initializeDatabase().then(async () => {
       maxAge: 7 * 24 * 60 * 60 * 1000
     }
   }));
+  
   app.use(express.static('client/dist'));
   
   logger.info('Session middleware initialized');
-});
-
-app.get('/api/auth/setup-status', async (req, res) => {
-  try {
-    const setupRequired = await userAuthService.isSetupRequired();
-    res.json({ setupRequired });
-  } catch (error) {
-    logger.error('Setup status check error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/auth/setup', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
-    }
-    
-    await userAuthService.setupFirstUser(username, password);
-    logger.info('First user setup completed');
-    res.json({ success: true, message: 'Account created successfully' });
-  } catch (error) {
-    logger.error('Setup error:', error);
-    res.status(400).json({ error: error.message });
-  }
-});
-
-app.post('/api/auth/user-login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
-    }
-    
-    const user = await userAuthService.authenticateUser(username, password);
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    
-    logger.info(`User logged in: ${username}`);
-    res.json({ success: true, user: { username: user.username } });
-  } catch (error) {
-    logger.error('User login error:', error);
-    res.status(401).json({ error: error.message });
-  }
-});
-
-app.post('/api/auth/logout', (req, res) => {
-  const username = req.session?.username;
-  req.session.destroy((err) => {
-    if (err) {
-      logger.error('Logout error:', err);
-      return res.status(500).json({ error: 'Logout failed' });
-    }
-    logger.info(`User logged out: ${username}`);
-    res.json({ success: true });
+  
+  // Define routes AFTER session middleware is set up
+  app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
   });
-});
 
-app.get('/api/auth/session', async (req, res) => {
-  try {
-    const setupRequired = await userAuthService.isSetupRequired();
-    
-    if (setupRequired) {
-      return res.json({ setupRequired: true, authenticated: false });
+  app.get('/api/auth/setup-status', async (req, res) => {
+    try {
+      const setupRequired = await userAuthService.isSetupRequired();
+      res.json({ setupRequired });
+    } catch (error) {
+      logger.error('Setup status check error:', error);
+      res.status(500).json({ error: error.message });
     }
-    
-    if (req.session && req.session.userId) {
-      return res.json({ 
-        authenticated: true, 
-        setupRequired: false,
-        user: { username: req.session.username }
-      });
-    }
-    
-    res.json({ authenticated: false, setupRequired: false });
-  } catch (error) {
-    logger.error('Session check error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+  });
 
-app.get('/api/status', requireAuth, async (req, res) => {
-  try {
-    const status = { 
-      status: 'running', 
-      authenticated: !!sessionCookie,
-      timestamp: new Date().toISOString()
-    };
-    
-    if (sessionCookie) {
-      try {
-        const userData = await classService.getUserProfile(sessionCookie);
-        status.user = userData;
-      } catch (error) {
-        logger.warn('Failed to fetch user profile:', error.message);
+  app.post('/api/auth/setup', async (req, res) => {
+    try {
+      const { username, password } = req.body;
+      
+      if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password are required' });
       }
+      
+      await userAuthService.setupFirstUser(username, password);
+      logger.info('First user setup completed');
+      res.json({ success: true, message: 'Account created successfully' });
+    } catch (error) {
+      logger.error('Setup error:', error);
+      res.status(400).json({ error: error.message });
     }
-    
-    res.json(status);
-  } catch (error) {
-    logger.error('Status error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+  });
 
-app.post('/api/auth/login', requireAuth, async (req, res) => {
-  try {
-    const cookie = await authService.login();
-    sessionCookie = cookie;
-    await db.saveSession(cookie);
-    logger.info('Session saved to database');
-    res.json({ success: true, authenticated: true });
-  } catch (error) {
-    logger.error('Login error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+  app.post('/api/auth/user-login', async (req, res) => {
+    try {
+      const { username, password } = req.body;
+      
+      if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password are required' });
+      }
+      
+      const user = await userAuthService.authenticateUser(username, password);
+      req.session.userId = user.id;
+      req.session.username = user.username;
+      
+      logger.info(`User logged in: ${username}`);
+      res.json({ success: true, user: { username: user.username } });
+    } catch (error) {
+      logger.error('User login error:', error);
+      res.status(401).json({ error: error.message });
+    }
+  });
 
-app.get('/api/classes', requireAuth, async (req, res) => {
-  try {
+  app.post('/api/auth/logout', (req, res) => {
+    const username = req.session?.username;
+    req.session.destroy((err) => {
+      if (err) {
+        logger.error('Logout error:', err);
+        return res.status(500).json({ error: 'Logout failed' });
+      }
+      logger.info(`User logged out: ${username}`);
+      res.json({ success: true });
+    });
+  });
+
+  app.get('/api/auth/session', async (req, res) => {
+    try {
+      const setupRequired = await userAuthService.isSetupRequired();
+      
+      if (setupRequired) {
+        return res.json({ setupRequired: true, authenticated: false });
+      }
+      
+      if (req.session && req.session.userId) {
+        return res.json({ 
+          authenticated: true, 
+          setupRequired: false,
+          user: { username: req.session.username }
+        });
+      }
+      
+      res.json({ authenticated: false, setupRequired: false });
+    } catch (error) {
+      logger.error('Session check error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/status', requireAuth, async (req, res) => {
+    try {
+      const status = { 
+        status: 'running', 
+        authenticated: !!sessionCookie,
+        timestamp: new Date().toISOString()
+      };
+      
+      if (sessionCookie) {
+        try {
+          const userData = await classService.getUserProfile(sessionCookie);
+          status.user = userData;
+        } catch (error) {
+          logger.warn('Failed to fetch user profile:', error.message);
+        }
+      }
+      
+      res.json(status);
+    } catch (error) {
+      logger.error('Status error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/auth/login', requireAuth, async (req, res) => {
+    try {
+      const cookie = await authService.login();
+      sessionCookie = cookie;
+      await db.saveSession(cookie);
+      logger.info('Session saved to database');
+      res.json({ success: true, authenticated: true });
+    } catch (error) {
+      logger.error('Login error:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.get('/api/classes', requireAuth, async (req, res) => {
+    try {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
       await db.saveSession(sessionCookie);
@@ -739,44 +742,51 @@ app.post('/api/auto-book/:profileId', requireAuth, async (req, res) => {
       });
     }
     
-    res.json(result);
-  } catch (error) {
-    logger.error('Auto-book error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+      res.json(result);
+    } catch (error) {
+      logger.error('Auto-book error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
 
-cron.schedule('*/5 * * * *', async () => {
-  logger.debug('Running scheduler check...');
-  try {
-    const hasCredentials = await db.hasCredentials();
-    const hasEnvCredentials = !!(process.env.YMCA_EMAIL && process.env.YMCA_PASSWORD);
-    
-    if (!hasCredentials && !hasEnvCredentials) {
-      logger.debug('Skipping scheduler: No YMCA credentials configured yet');
-      return;
+  // Setup cron schedule
+  cron.schedule('*/5 * * * *', async () => {
+    logger.debug('Running scheduler check...');
+    try {
+      const hasCredentials = await db.hasCredentials();
+      const hasEnvCredentials = !!(process.env.YMCA_EMAIL && process.env.YMCA_PASSWORD);
+      
+      if (!hasCredentials && !hasEnvCredentials) {
+        logger.debug('Skipping scheduler: No YMCA credentials configured yet');
+        return;
+      }
+      
+      if (!sessionCookie) {
+        sessionCookie = await authService.login();
+        await db.saveSession(sessionCookie);
+        logger.info('Session saved to database');
+      }
+      await schedulerService.checkAndSignup(sessionCookie);
+    } catch (error) {
+      logger.error('Scheduler error:', error);
+      if (error.message?.includes('401') || error.response?.status === 401) {
+        sessionCookie = null;
+        await db.clearSession();
+        logger.info('Session cleared from database');
+      } else {
+        sessionCookie = null;
+      }
     }
-    
-    if (!sessionCookie) {
-      sessionCookie = await authService.login();
-      await db.saveSession(sessionCookie);
-      logger.info('Session saved to database');
-    }
-    await schedulerService.checkAndSignup(sessionCookie);
-  } catch (error) {
-    logger.error('Scheduler error:', error);
-    if (error.message?.includes('401') || error.response?.status === 401) {
-      sessionCookie = null;
-      await db.clearSession();
-      logger.info('Session cleared from database');
-    } else {
-      sessionCookie = null;
-    }
-  }
-});
+  });
+}
 
-app.listen(PORT, '0.0.0.0', () => {
-  logger.info(`YMCA Auto-Signup server running on port ${PORT}`);
-  logger.info(`Environment: ${NODE_ENV}`);
-  logger.info(`YMCA URL: ${process.env.YMCA_URL || 'https://ymca-triangle.fisikal.com'}`);
+startServer().then(() => {
+  app.listen(PORT, '0.0.0.0', () => {
+    logger.info(`YMCA Auto-Signup server running on port ${PORT}`);
+    logger.info(`Environment: ${NODE_ENV}`);
+    logger.info(`YMCA URL: ${process.env.YMCA_URL || 'https://ymca-triangle.fisikal.com'}`);
+  });
+}).catch(error => {
+  logger.error('Failed to start server:', error);
+  process.exit(1);
 });
