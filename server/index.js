@@ -738,6 +738,14 @@ app.post('/api/auto-book/:profileId', requireAuth, async (req, res) => {
 cron.schedule('*/5 * * * *', async () => {
   logger.debug('Running scheduler check...');
   try {
+    const hasCredentials = await db.hasCredentials();
+    const hasEnvCredentials = !!(process.env.YMCA_EMAIL && process.env.YMCA_PASSWORD);
+    
+    if (!hasCredentials && !hasEnvCredentials) {
+      logger.debug('Skipping scheduler: No YMCA credentials configured yet');
+      return;
+    }
+    
     if (!sessionCookie) {
       sessionCookie = await authService.login();
       await db.saveSession(sessionCookie);
