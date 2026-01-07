@@ -43,6 +43,10 @@ app.use(session({
 }));
 app.use(express.static('client/dist'));
 
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 let sessionCookie = null;
 let dbReady = false;
 
