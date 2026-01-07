@@ -82,6 +82,12 @@ function App() {
   const handleLogin = async () => {
     setLoading(true);
     try {
+      const credentialsStatus = await api.get('/api/credentials/status');
+      if (!credentialsStatus.data.configured) {
+        setActiveTab('settings');
+        setLoading(false);
+        return;
+      }
       await api.post('/api/auth/login');
       await fetchStatus();
     } catch (error) {
