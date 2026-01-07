@@ -48,18 +48,17 @@ A comprehensive web application for automatically signing up for YMCA classes us
    cp .env.example .env
    ```
 
-3. **Edit `.env` with configuration**
+3. **Edit `.env` with configuration (Optional)**
    ```env
    NODE_ENV=production
    PORT=3001
-   SESSION_SECRET=your-strong-random-secret-key-here
-   YMCA_URL=https://ymca-triangle.fisikal.com
-   API_BASE_URL=https://ymca-triangle.fisikal.com/api/web
    ```
    
-   **Important**: Generate a strong session secret with:
+   **Note**: `SESSION_SECRET` will auto-generate if not provided. For persistent sessions across server restarts, optionally set it:
    ```bash
+   # Generate a session secret
    node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   # Add to .env: SESSION_SECRET=<generated-value>
    ```
 
 4. **Build and run with Docker**
@@ -231,7 +230,7 @@ Classes are matched based on:
 |----------|-------------|---------|
 | `NODE_ENV` | Environment mode (development/production) | `production` |
 | `PORT` | Server port | `3001` |
-| `SESSION_SECRET` | **Required** Secret key for session encryption | None - must set |
+| `SESSION_SECRET` | Secret key for session encryption (auto-generated if not set) | Auto-generated |
 | `YMCA_EMAIL` | Your YMCA account email (optional - can set in UI) | None |
 | `YMCA_PASSWORD` | Your YMCA account password (optional - can set in UI) | None |
 | `YMCA_URL` | YMCA Fisikal web URL | `https://ymca-triangle.fisikal.com` |

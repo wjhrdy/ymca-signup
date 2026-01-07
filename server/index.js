@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const session = require('express-session');
+const crypto = require('crypto');
 const cron = require('node-cron');
 const logger = require('./logger');
 const appConfig = require('./config');
@@ -17,13 +18,21 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const NODE_ENV = process.env.NODE_ENV || 'production';
 
+// Auto-generate SESSION_SECRET if not provided (useful for one-click deployments)
+let SESSION_SECRET = process.env.SESSION_SECRET;
+if (!SESSION_SECRET) {
+  SESSION_SECRET = crypto.randomBytes(32).toString('hex');
+  logger.warn('SESSION_SECRET not set in environment - generated random secret');
+  logger.warn('⚠️  Sessions will reset on server restart. Set SESSION_SECRET in environment for persistent sessions.');
+}
+
 app.use(cors({
   origin: true,
   credentials: true
 }));
 app.use(bodyParser.json());
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'ymca-signup-secret-change-in-production',
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {

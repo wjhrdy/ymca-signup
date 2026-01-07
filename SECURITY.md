@@ -18,7 +18,10 @@ This application now implements a multi-layer security system designed for safe 
 
 ### Before Deploying to Production
 
-1. **Set Strong Session Secret**
+1. **Session Secret (Optional but Recommended)**
+   
+   The app will auto-generate a `SESSION_SECRET` if not provided, which is perfect for one-click deployments. However, for production with persistent sessions across restarts, set a fixed value:
+   
    ```bash
    # Generate a cryptographically secure random secret
    node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
@@ -27,6 +30,8 @@ This application now implements a multi-layer security system designed for safe 
    ```
    SESSION_SECRET=<generated-secret-here>
    ```
+   
+   **Note**: If not set, sessions will be invalidated on server restart (users will need to login again).
 
 2. **Create Strong Admin Account**
    - Username: At least 3 characters, unique
