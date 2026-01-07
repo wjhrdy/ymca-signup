@@ -18,30 +18,13 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const NODE_ENV = process.env.NODE_ENV || 'production';
 
-// Auto-generate SESSION_SECRET if not provided (useful for one-click deployments)
-let SESSION_SECRET = process.env.SESSION_SECRET;
-if (!SESSION_SECRET) {
-  SESSION_SECRET = crypto.randomBytes(32).toString('hex');
-  logger.warn('SESSION_SECRET not set in environment - generated random secret');
-  logger.warn('⚠️  Sessions will reset on server restart. Set SESSION_SECRET in environment for persistent sessions.');
-}
+let SESSION_SECRET = null;
 
 app.use(cors({
   origin: true,
   credentials: true
 }));
 app.use(bodyParser.json());
-app.use(session({
-  secret: SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    httpOnly: true,
-    maxAge: 7 * 24 * 60 * 60 * 1000
-  }
-}));
-app.use(express.static('client/dist'));
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -60,6 +43,19 @@ async function initializeDatabase() {
       } else {
         logger.debug('No saved session found');
       }
+      
+      // Load or generate SESSION_SECRET from database
+      SESSION_SECRET = process.env.SESSION_SECRET || await db.getSessionSecret();
+      if (!SESSION_SECRET) {
+        SESSION_SECRET = crypto.randomBytes(32).toString('hex');
+        await db.saveSessionSecret(SESSION_SECRET);
+        logger.info('✓ Generated and saved new SESSION_SECRET to database for persistent sessions');
+      } else if (!process.env.SESSION_SECRET) {
+        logger.info('✓ Loaded SESSION_SECRET from database - sessions will persist across deployments');
+      } else {
+        logger.info('✓ Using SESSION_SECRET from environment variable');
+      }
+      
       dbReady = true;
       resolve();
     }, 100);
@@ -71,6 +67,21 @@ initializeDatabase().then(async () => {
   appConfig.setDatabase(db);
   await appConfig.loadConfig();
   logger.info('Configuration initialization complete');
+  
+  // Initialize session middleware after SESSION_SECRET is loaded
+  app.use(session({
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: process.env.NODE_ENV === 'production',
+      httpOnly: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    }
+  }));
+  app.use(express.static('client/dist'));
+  
+  logger.info('Session middleware initialized');
 });
 
 app.get('/api/auth/setup-status', async (req, res) => {

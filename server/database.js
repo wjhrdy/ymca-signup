@@ -201,6 +201,14 @@ function createTables() {
         last_login DATETIME
       )
     `);
+    
+    db.run(`
+      CREATE TABLE IF NOT EXISTS system_config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        session_secret TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
   });
 }
 
@@ -656,6 +664,29 @@ function updateUserLogin(userId) {
   });
 }
 
+function getSessionSecret() {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT session_secret FROM system_config WHERE id = 1', (err, row) => {
+      if (err) reject(err);
+      else resolve(row?.session_secret || null);
+    });
+  });
+}
+
+function saveSessionSecret(secret) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      `INSERT OR REPLACE INTO system_config (id, session_secret, created_at) 
+       VALUES (1, ?, CURRENT_TIMESTAMP)`,
+      [secret],
+      (err) => {
+        if (err) reject(err);
+        else resolve();
+      }
+    );
+  });
+}
+
 module.exports = {
   initialize,
   getAllTrackedClasses,
@@ -682,5 +713,7 @@ module.exports = {
   hasUsers,
   createUser,
   getUserByUsername,
-  updateUserLogin
+  updateUserLogin,
+  getSessionSecret,
+  saveSessionSecret
 };

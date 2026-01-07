@@ -45,15 +45,7 @@ Then open `http://localhost:3001` in your browser.
 4. Click "Connect YMCA" in the header
 5. Start tracking classes
 
-**Optional - Persistent sessions:**
-
-By default, your session expires when the server restarts. To keep sessions alive:
-
-```bash
-cp .env.example .env
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-# Add the output to .env as SESSION_SECRET=<value>
-```
+**Sessions persist automatically** - The app generates and stores a session secret in the database on first run, so your login survives server restarts and redeployments.
 
 ## Local Development
 
