@@ -3,8 +3,11 @@ import api from '../api';
 import { Calendar, Clock, MapPin, User, Plus, RefreshCw, Search, CheckCircle, UserX, ExternalLink } from 'lucide-react';
 import Fuse from 'fuse.js';
 import TrackClassModal from './TrackClassModal';
+import toast from 'react-hot-toast';
+import { useConfirm } from './ConfirmDialog';
 
 function ClassBrowser({ authenticated, onNavigateToTracked }) {
+  const { confirm } = useConfirm();
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -16,7 +19,7 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
   const [offset, setOffset] = useState(0);
   const [filters, setFilters] = useState({
     startDate: new Date().toISOString().split('T')[0],
-    endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]  // 30 days for more scroll opportunities
+    endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
   });
 
   useEffect(() => {
@@ -76,13 +79,12 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
         console.log(`✅ Loaded ${response.data.length} classes for comprehensive search`);
       } else {
         setOffset(50);
-        // Assume more classes available unless we got zero (server filters can reduce count)
         setHasMore(response.data.length > 0);
         console.log(`📊 Initial load: ${response.data.length} classes, hasMore: true`);
       }
     } catch (error) {
       console.error('Failed to fetch classes:', error);
-      alert('Failed to fetch classes: ' + (error.response?.data?.error || error.message));
+      toast.error('Failed to fetch classes: ' + (error.response?.data?.error || error.message));
     } finally {
       setLoading(false);
     }
@@ -121,35 +123,42 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
   };
 
   const signupNow = async (classId) => {
-    if (!confirm('Sign up for this class now?')) return;
+    const confirmed = await confirm('Sign up for this class now?', {
+      title: 'Confirm Signup',
+      confirmText: 'Sign Up'
+    });
+    if (!confirmed) return;
 
     try {
-      // Find the class to get its lock_version
       const classData = classes.find(c => c.id === classId);
       const payload = classData?.lock_version !== undefined 
         ? { lock_version: classData.lock_version }
         : {};
       
       await api.post(`/api/signup/${classId}`, payload);
-      alert('Successfully signed up for class!');
-      fetchClasses(); // Refresh the list
+      toast.success('Successfully signed up for class!');
+      fetchClasses();
     } catch (error) {
       console.error('Signup failed:', error);
-      alert('Signup failed: ' + (error.response?.data?.error || error.message));
+      toast.error('Signup failed: ' + (error.response?.data?.error || error.message));
     }
   };
 
   const cancelClass = async (classId, serviceName) => {
-    if (!confirm(`Cancel your enrollment in ${serviceName}?`)) return;
+    const confirmed = await confirm(`Cancel your enrollment in ${serviceName}?`, {
+      title: 'Cancel Enrollment',
+      confirmText: 'Cancel Enrollment'
+    });
+    if (!confirmed) return;
 
     setCancellingClass(classId);
     try {
       await api.delete(`/api/bookings/${classId}`);
-      alert('Successfully cancelled class!');
+      toast.success('Successfully cancelled class!');
       fetchClasses();
     } catch (error) {
       console.error('Cancel failed:', error);
-      alert('Cancel failed: ' + (error.response?.data?.error || error.message));
+      toast.error('Cancel failed: ' + (error.response?.data?.error || error.message));
     } finally {
       setCancellingClass(null);
     }

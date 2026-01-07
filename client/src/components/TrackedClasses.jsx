@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { Calendar, Clock, MapPin, User, Trash2, Settings, RefreshCw, ToggleLeft, ToggleRight, Eye, BookOpen, X, UserX } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useConfirm } from './ConfirmDialog';
 
 function TrackedClasses() {
+  const { confirm } = useConfirm();
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -41,21 +44,27 @@ function TrackedClasses() {
       await api.put(`/api/tracked-classes/${id}`, editForm);
       setEditingId(null);
       fetchTrackedClasses();
+      toast.success('Class settings updated');
     } catch (error) {
       console.error('Failed to update class:', error);
-      alert('Failed to update class: ' + (error.response?.data?.error || error.message));
+      toast.error('Failed to update class: ' + (error.response?.data?.error || error.message));
     }
   };
 
   const deleteClass = async (id) => {
-    if (!confirm('Remove this class from tracking?')) return;
+    const confirmed = await confirm('Remove this class from tracking?', {
+      title: 'Remove Class',
+      confirmText: 'Remove'
+    });
+    if (!confirmed) return;
 
     try {
       await api.delete(`/api/tracked-classes/${id}`);
       fetchTrackedClasses();
+      toast.success('Class removed from tracking');
     } catch (error) {
       console.error('Failed to delete class:', error);
-      alert('Failed to delete class: ' + (error.response?.data?.error || error.message));
+      toast.error('Failed to delete class: ' + (error.response?.data?.error || error.message));
     }
   };
 
@@ -66,9 +75,10 @@ function TrackedClasses() {
         signupHoursBefore: classItem.signup_hours_before
       });
       fetchTrackedClasses();
+      toast.success(classItem.auto_signup === 0 ? 'Auto-signup enabled' : 'Auto-signup disabled');
     } catch (error) {
       console.error('Failed to toggle auto-signup:', error);
-      alert('Failed to toggle auto-signup: ' + (error.response?.data?.error || error.message));
+      toast.error('Failed to toggle auto-signup: ' + (error.response?.data?.error || error.message));
     }
   };
 
@@ -102,18 +112,21 @@ function TrackedClasses() {
       setPreviewClasses(response.data.matchingClasses || []);
     } catch (error) {
       console.error('Failed to preview matches:', error);
-      alert('Failed to preview matches: ' + (error.response?.data?.error || error.message));
+      toast.error('Failed to preview matches: ' + (error.response?.data?.error || error.message));
     } finally {
       setPreviewLoading(false);
     }
   };
 
   const bookClass = async (occurrenceId, serviceName) => {
-    if (!confirm(`Sign up for ${serviceName}?`)) return;
+    const confirmed = await confirm(`Sign up for ${serviceName}?`, {
+      title: 'Confirm Signup',
+      confirmText: 'Sign Up'
+    });
+    if (!confirmed) return;
 
     setBookingClass(occurrenceId);
     try {
-      // Find the occurrence in preview classes to get its lock_version
       const occurrence = previewClasses.find(c => c.id === occurrenceId);
       const payload = occurrence?.lock_version !== undefined 
         ? { lock_version: occurrence.lock_version }
@@ -122,33 +135,37 @@ function TrackedClasses() {
       console.log(`Booking class ${occurrenceId} with payload:`, payload);
       
       await api.post(`/api/signup/${occurrenceId}`, payload);
-      alert('Successfully signed up for class!');
+      toast.success('Successfully signed up for class!');
       const updatedClassItem = classes.find(c => c.id === previewingId);
       if (updatedClassItem) {
         await previewMatches(updatedClassItem);
       }
     } catch (error) {
       console.error('Signup failed:', error);
-      alert('Signup failed: ' + (error.response?.data?.error || error.message));
+      toast.error('Signup failed: ' + (error.response?.data?.error || error.message));
     } finally {
       setBookingClass(null);
     }
   };
 
   const cancelClass = async (occurrenceId, serviceName) => {
-    if (!confirm(`Cancel your enrollment in ${serviceName}?`)) return;
+    const confirmed = await confirm(`Cancel your enrollment in ${serviceName}?`, {
+      title: 'Cancel Enrollment',
+      confirmText: 'Cancel Enrollment'
+    });
+    if (!confirmed) return;
 
     setBookingClass(occurrenceId);
     try {
       await api.delete(`/api/bookings/${occurrenceId}`);
-      alert('Successfully cancelled class!');
+      toast.success('Successfully cancelled class!');
       const updatedClassItem = classes.find(c => c.id === previewingId);
       if (updatedClassItem) {
         await previewMatches(updatedClassItem);
       }
     } catch (error) {
       console.error('Cancel failed:', error);
-      alert('Cancel failed: ' + (error.response?.data?.error || error.message));
+      toast.error('Cancel failed: ' + (error.response?.data?.error || error.message));
     } finally {
       setBookingClass(null);
     }

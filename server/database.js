@@ -170,6 +170,37 @@ function createTables() {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    
+    db.run(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        preferred_locations TEXT,
+        check_interval_minutes INTEGER,
+        default_signup_hours_before INTEGER,
+        default_days_ahead INTEGER,
+        max_classes_per_fetch INTEGER,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    
+    db.run(`
+      CREATE TABLE IF NOT EXISTS credentials (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        ymca_email TEXT,
+        ymca_password TEXT,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    
+    db.run(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_login DATETIME
+      )
+    `);
   });
 }
 
@@ -492,6 +523,139 @@ function getClientId() {
   });
 }
 
+function saveSettings(settings) {
+  return new Promise((resolve, reject) => {
+    const preferredLocations = Array.isArray(settings.preferredLocations) 
+      ? JSON.stringify(settings.preferredLocations) 
+      : settings.preferredLocations;
+    
+    db.run(
+      `INSERT OR REPLACE INTO app_settings 
+       (id, preferred_locations, check_interval_minutes, default_signup_hours_before, 
+        default_days_ahead, max_classes_per_fetch, updated_at) 
+       VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [
+        preferredLocations,
+        settings.checkIntervalMinutes,
+        settings.defaultSignupHoursBefore,
+        settings.defaultDaysAhead,
+        settings.maxClassesPerFetch
+      ],
+      (err) => {
+        if (err) reject(err);
+        else resolve();
+      }
+    );
+  });
+}
+
+function loadSettings() {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT * FROM app_settings WHERE id = 1', (err, row) => {
+      if (err) reject(err);
+      else if (!row) resolve(null);
+      else {
+        const settings = {
+          preferredLocations: row.preferred_locations ? JSON.parse(row.preferred_locations) : [],
+          checkIntervalMinutes: row.check_interval_minutes,
+          defaultSignupHoursBefore: row.default_signup_hours_before,
+          defaultDaysAhead: row.default_days_ahead,
+          maxClassesPerFetch: row.max_classes_per_fetch
+        };
+        resolve(settings);
+      }
+    });
+  });
+}
+
+function saveCredentials(credentials) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      `INSERT OR REPLACE INTO credentials 
+       (id, ymca_email, ymca_password, updated_at) 
+       VALUES (1, ?, ?, CURRENT_TIMESTAMP)`,
+      [credentials.email, credentials.password],
+      (err) => {
+        if (err) reject(err);
+        else resolve();
+      }
+    );
+  });
+}
+
+function loadCredentials() {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT ymca_email, ymca_password FROM credentials WHERE id = 1', (err, row) => {
+      if (err) reject(err);
+      else if (!row) resolve(null);
+      else resolve({
+        email: row.ymca_email,
+        password: row.ymca_password
+      });
+    });
+  });
+}
+
+function hasCredentials() {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT ymca_email FROM credentials WHERE id = 1', (err, row) => {
+      if (err) reject(err);
+      else resolve(!!row && !!row.ymca_email);
+    });
+  });
+}
+
+function hasUsers() {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT COUNT(*) as count FROM users', (err, row) => {
+      if (err) reject(err);
+      else resolve(row.count > 0);
+    });
+  });
+}
+
+function createUser(username, passwordHash) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      'INSERT INTO users (username, password_hash) VALUES (?, ?)',
+      [username, passwordHash],
+      function(err) {
+        if (err) {
+          if (err.message.includes('UNIQUE constraint')) {
+            reject(new Error('Username already exists'));
+          } else {
+            reject(err);
+          }
+        } else {
+          resolve(this.lastID);
+        }
+      }
+    );
+  });
+}
+
+function getUserByUsername(username) {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT * FROM users WHERE username = ?', [username], (err, row) => {
+      if (err) reject(err);
+      else resolve(row || null);
+    });
+  });
+}
+
+function updateUserLogin(userId) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?',
+      [userId],
+      (err) => {
+        if (err) reject(err);
+        else resolve();
+      }
+    );
+  });
+}
+
 module.exports = {
   initialize,
   getAllTrackedClasses,
@@ -509,5 +673,14 @@ module.exports = {
   loadSession,
   clearSession,
   saveClientId,
-  getClientId
+  getClientId,
+  saveSettings,
+  loadSettings,
+  saveCredentials,
+  loadCredentials,
+  hasCredentials,
+  hasUsers,
+  createUser,
+  getUserByUsername,
+  updateUserLogin
 };

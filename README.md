@@ -2,9 +2,14 @@
 
 A comprehensive web application for automatically signing up for YMCA classes using the Fisikal API. This application monitors your tracked classes and automatically registers you at a predefined time before the class starts (default: 46 hours).
 
+## Deploy
+
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/MMEviu?referralCode=yfSbnH)
+
 ## Features
 
-- 🔐 **Secure Authentication** - API-based authentication with YMCA credentials
+- 🔐 **Secure Authentication** - Multi-layer authentication with admin login and YMCA credentials
+- 🛡️ **Web-Hardened** - Protected with user authentication for safe web deployment
 - 📅 **Class Browser** - View and search available classes at your YMCA locations
 - 📌 **Class Tracking** - Track specific classes you want to attend regularly
 - ⚡ **Auto-Signup** - Automatically register for classes at the optimal time
@@ -43,14 +48,18 @@ A comprehensive web application for automatically signing up for YMCA classes us
    cp .env.example .env
    ```
 
-3. **Edit `.env` with your credentials**
+3. **Edit `.env` with configuration**
    ```env
-   YMCA_EMAIL=your-email@example.com
-   YMCA_PASSWORD=your-password
-   YMCA_URL=https://ymca-triangle.fisikal.com
-   API_BASE_URL=https://ymca-triangle.fisikal.com/api/unified
+   NODE_ENV=production
    PORT=3001
-   DEFAULT_SIGNUP_HOURS=46
+   SESSION_SECRET=your-strong-random-secret-key-here
+   YMCA_URL=https://ymca-triangle.fisikal.com
+   API_BASE_URL=https://ymca-triangle.fisikal.com/api/web
+   ```
+   
+   **Important**: Generate a strong session secret with:
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
    ```
 
 4. **Build and run with Docker**
@@ -60,6 +69,13 @@ A comprehensive web application for automatically signing up for YMCA classes us
 
 5. **Access the application**
    Open your browser to `http://localhost:3001`
+
+6. **First-time setup**
+   - On first run, you'll be prompted to create an admin account
+   - Choose a strong username and password (minimum 8 characters)
+   - This account protects access to your YMCA signup system
+   - After setup, you'll login with these credentials
+   - Configure your YMCA credentials in the Settings tab
 
 ## Local Development Setup
 
@@ -91,26 +107,42 @@ A comprehensive web application for automatically signing up for YMCA classes us
 
 ## Usage Guide
 
-### 1. Authentication
-- Click the **Login** button in the header
-- The system will authenticate using your credentials from `.env`
-- Authentication happens via API using the Fisikal web service
+### 1. Initial Setup (First Run)
+- On first access, you'll see a setup screen
+- Create an admin account with a username and password
+- This account secures your application for web deployment
+- **Keep these credentials safe** - they control access to your YMCA automation
 
-### 2. Browse Classes
+### 2. Login
+- After setup, login with your admin credentials
+- You'll be taken to the main application
+
+### 3. Configure YMCA Credentials
+- Navigate to **Settings** tab
+- Enter your YMCA account email and password
+- Click **Save Credentials**
+- The app will use these to authenticate with YMCA's system
+
+### 4. Connect to YMCA
+- Click **Connect YMCA** button in the header
+- The system will authenticate using your stored YMCA credentials
+- Once connected, you can browse and track classes
+
+### 5. Browse Classes
 - Navigate to the **Browse Classes** tab
 - Adjust date filters to view classes in your desired timeframe
 - Click **Refresh** to fetch the latest class list
 - Click **Track** to add a class to your tracked list
 - Click **Sign Up Now** to immediately register for a class
 
-### 3. Track Classes
+### 6. Track Classes
 - Navigate to the **Tracked Classes** tab
 - View all classes you're monitoring
 - Toggle **Auto Signup** on/off for each class
 - Adjust **signup timing** (hours before class starts)
 - Remove classes you no longer want to track
 
-### 4. View Signup History
+### 7. View Signup History
 - Navigate to the **Signup Logs** tab
 - See all automatic and manual signup attempts
 - View success/failure status and error messages
@@ -162,10 +194,17 @@ Classes are matched based on:
 
 ## API Endpoints
 
-### Status
-- `GET /api/status` - System status and authentication state
+### User Authentication
+- `GET /api/auth/setup-status` - Check if initial setup is required
+- `POST /api/auth/setup` - Create first admin user (only works if no users exist)
+- `POST /api/auth/user-login` - Login with admin credentials
+- `POST /api/auth/logout` - Logout current session
+- `GET /api/auth/session` - Check current authentication status
 
-### Authentication
+### Status (Protected)
+- `GET /api/status` - System status and YMCA authentication state
+
+### YMCA Authentication (Protected)
 - `POST /api/auth/login` - Authenticate with YMCA credentials
 
 ### Classes
@@ -190,12 +229,13 @@ Classes are matched based on:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `YMCA_EMAIL` | Your YMCA account email | Required |
-| `YMCA_PASSWORD` | Your YMCA account password | Required |
-| `YMCA_URL` | YMCA Fisikal web URL | `https://ymca-triangle.fisikal.com` |
-| `API_BASE_URL` | Fisikal API base URL | `https://ymca-triangle.fisikal.com/api/unified` |
+| `NODE_ENV` | Environment mode (development/production) | `production` |
 | `PORT` | Server port | `3001` |
-| `DEFAULT_SIGNUP_HOURS` | Default hours before class to signup | `46` |
+| `SESSION_SECRET` | **Required** Secret key for session encryption | None - must set |
+| `YMCA_EMAIL` | Your YMCA account email (optional - can set in UI) | None |
+| `YMCA_PASSWORD` | Your YMCA account password (optional - can set in UI) | None |
+| `YMCA_URL` | YMCA Fisikal web URL | `https://ymca-triangle.fisikal.com` |
+| `API_BASE_URL` | Fisikal API base URL | `https://ymca-triangle.fisikal.com/api/web` |
 
 ### Signup Timing
 
@@ -248,10 +288,24 @@ docker-compose exec ymca-signup sqlite3 /app/database.db
 
 ## Security Notes
 
+### For Web Deployment
+- **Admin Login Required**: The app now requires admin authentication before access
+- **First-Run Setup**: Create a strong admin account on first deployment
+- **Session Security**: Always set a strong `SESSION_SECRET` in production
+- **HTTPS Recommended**: Use HTTPS/TLS for production deployments
+- **Credentials**: YMCA credentials are stored encrypted in the database
+
+### General Security
 - Never commit `.env` file to version control
-- Keep credentials secure
+- Keep both admin and YMCA credentials secure
 - Run Docker container with appropriate security settings
 - Consider using Docker secrets for production deployments
+- Regularly update dependencies for security patches
+
+### Password Requirements
+- Admin username: Minimum 3 characters
+- Admin password: Minimum 8 characters
+- Use strong, unique passwords
 
 ## Development
 

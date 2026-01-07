@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const session = require('express-session');
 const cron = require('node-cron');
 const logger = require('./logger');
 const appConfig = require('./config');
@@ -9,12 +10,28 @@ const db = require('./database');
 const authService = require('./services/authService');
 const classService = require('./services/classService');
 const schedulerService = require('./services/schedulerService');
+const userAuthService = require('./services/userAuthService');
+const { requireAuth } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const NODE_ENV = process.env.NODE_ENV || 'production';
 
-app.use(cors());
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
 app.use(bodyParser.json());
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'ymca-signup-secret-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  }
+}));
 app.use(express.static('client/dist'));
 
 let sessionCookie = null;
@@ -36,12 +53,96 @@ async function initializeDatabase() {
   });
 }
 
-appConfig.loadConfig();
-initializeDatabase().then(() => {
+initializeDatabase().then(async () => {
   logger.info('Database initialization complete');
+  appConfig.setDatabase(db);
+  await appConfig.loadConfig();
+  logger.info('Configuration initialization complete');
 });
 
-app.get('/api/status', async (req, res) => {
+app.get('/api/auth/setup-status', async (req, res) => {
+  try {
+    const setupRequired = await userAuthService.isSetupRequired();
+    res.json({ setupRequired });
+  } catch (error) {
+    logger.error('Setup status check error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/auth/setup', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+    
+    await userAuthService.setupFirstUser(username, password);
+    logger.info('First user setup completed');
+    res.json({ success: true, message: 'Account created successfully' });
+  } catch (error) {
+    logger.error('Setup error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/auth/user-login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+    
+    const user = await userAuthService.authenticateUser(username, password);
+    req.session.userId = user.id;
+    req.session.username = user.username;
+    
+    logger.info(`User logged in: ${username}`);
+    res.json({ success: true, user: { username: user.username } });
+  } catch (error) {
+    logger.error('User login error:', error);
+    res.status(401).json({ error: error.message });
+  }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const username = req.session?.username;
+  req.session.destroy((err) => {
+    if (err) {
+      logger.error('Logout error:', err);
+      return res.status(500).json({ error: 'Logout failed' });
+    }
+    logger.info(`User logged out: ${username}`);
+    res.json({ success: true });
+  });
+});
+
+app.get('/api/auth/session', async (req, res) => {
+  try {
+    const setupRequired = await userAuthService.isSetupRequired();
+    
+    if (setupRequired) {
+      return res.json({ setupRequired: true, authenticated: false });
+    }
+    
+    if (req.session && req.session.userId) {
+      return res.json({ 
+        authenticated: true, 
+        setupRequired: false,
+        user: { username: req.session.username }
+      });
+    }
+    
+    res.json({ authenticated: false, setupRequired: false });
+  } catch (error) {
+    logger.error('Session check error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/status', requireAuth, async (req, res) => {
   try {
     const status = { 
       status: 'running', 
@@ -65,7 +166,7 @@ app.get('/api/status', async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', requireAuth, async (req, res) => {
   try {
     const cookie = await authService.login();
     sessionCookie = cookie;
@@ -78,7 +179,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.get('/api/classes', async (req, res) => {
+app.get('/api/classes', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
@@ -135,7 +236,7 @@ app.get('/api/classes', async (req, res) => {
   }
 });
 
-app.get('/api/tracked-classes', async (req, res) => {
+app.get('/api/tracked-classes', requireAuth, async (req, res) => {
   try {
     const trackedClasses = await db.getAllTrackedClasses();
     
@@ -202,7 +303,7 @@ app.get('/api/tracked-classes', async (req, res) => {
   }
 });
 
-app.post('/api/tracked-classes/preview', async (req, res) => {
+app.post('/api/tracked-classes/preview', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
@@ -308,7 +409,7 @@ app.post('/api/tracked-classes/preview', async (req, res) => {
   }
 });
 
-app.post('/api/tracked-classes', async (req, res) => {
+app.post('/api/tracked-classes', requireAuth, async (req, res) => {
   try {
     if (!dbReady) {
       return res.status(503).json({ error: 'Database not ready, please try again' });
@@ -326,6 +427,7 @@ app.post('/api/tracked-classes', async (req, res) => {
       autoSignup, signupHoursBefore
     });
     
+    const config = appConfig.getConfig();
     const id = await db.addTrackedClass({
       serviceId,
       serviceName,
@@ -339,7 +441,7 @@ app.post('/api/tracked-classes', async (req, res) => {
       matchExactTime: matchExactTime !== undefined ? matchExactTime : false,
       timeTolerance: timeTolerance || 15,
       autoSignup: autoSignup || false,
-      signupHoursBefore: signupHoursBefore || parseInt(process.env.DEFAULT_SIGNUP_HOURS) || 46
+      signupHoursBefore: signupHoursBefore || config.scheduler.defaultSignupHoursBefore || 46
     });
     
     logger.info('Successfully added tracked class with ID:', id);
@@ -351,7 +453,7 @@ app.post('/api/tracked-classes', async (req, res) => {
   }
 });
 
-app.put('/api/tracked-classes/:id', (req, res) => {
+app.put('/api/tracked-classes/:id', requireAuth, (req, res) => {
   try {
     const { id } = req.params;
     const { autoSignup, signupHoursBefore } = req.body;
@@ -364,7 +466,7 @@ app.put('/api/tracked-classes/:id', (req, res) => {
   }
 });
 
-app.delete('/api/tracked-classes/:id', (req, res) => {
+app.delete('/api/tracked-classes/:id', requireAuth, (req, res) => {
   try {
     const { id } = req.params;
     db.deleteTrackedClass(id);
@@ -375,7 +477,7 @@ app.delete('/api/tracked-classes/:id', (req, res) => {
   }
 });
 
-app.post('/api/signup/:occurrenceId', async (req, res) => {
+app.post('/api/signup/:occurrenceId', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
@@ -401,7 +503,7 @@ app.post('/api/signup/:occurrenceId', async (req, res) => {
   }
 });
 
-app.get('/api/my-bookings', async (req, res) => {
+app.get('/api/my-bookings', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
@@ -430,7 +532,7 @@ app.get('/api/my-bookings', async (req, res) => {
   }
 });
 
-app.delete('/api/bookings/:occurrenceId', async (req, res) => {
+app.delete('/api/bookings/:occurrenceId', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
@@ -452,7 +554,7 @@ app.delete('/api/bookings/:occurrenceId', async (req, res) => {
   }
 });
 
-app.get('/api/signup-logs', (req, res) => {
+app.get('/api/signup-logs', requireAuth, (req, res) => {
   try {
     const logs = db.getSignupLogs(50);
     res.json(logs);
@@ -462,7 +564,69 @@ app.get('/api/signup-logs', (req, res) => {
   }
 });
 
-app.post('/api/class-profiles', async (req, res) => {
+app.get('/api/settings', requireAuth, async (req, res) => {
+  try {
+    const config = appConfig.getConfig();
+    res.json(config);
+  } catch (error) {
+    logger.error('Get settings error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/settings', requireAuth, async (req, res) => {
+  try {
+    const { preferredLocations, scheduler, classFetch } = req.body;
+    
+    const updatedConfig = await appConfig.updateConfig({
+      preferredLocations,
+      scheduler,
+      classFetch
+    });
+    
+    res.json({ success: true, config: updatedConfig });
+  } catch (error) {
+    logger.error('Update settings error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/credentials/status', requireAuth, async (req, res) => {
+  try {
+    const hasCredentials = await db.hasCredentials();
+    const hasEnvCredentials = !!(process.env.YMCA_EMAIL && process.env.YMCA_PASSWORD);
+    res.json({ 
+      configured: hasCredentials || hasEnvCredentials,
+      source: hasCredentials ? 'database' : (hasEnvCredentials ? 'environment' : 'none')
+    });
+  } catch (error) {
+    logger.error('Get credentials status error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/credentials', requireAuth, async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    
+    await db.saveCredentials({ email, password });
+    
+    sessionCookie = null;
+    await db.clearSession();
+    
+    logger.info('Credentials updated successfully');
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Update credentials error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/class-profiles', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
@@ -498,7 +662,7 @@ app.post('/api/class-profiles', async (req, res) => {
   }
 });
 
-app.get('/api/class-profiles', (req, res) => {
+app.get('/api/class-profiles', requireAuth, (req, res) => {
   try {
     const profiles = db.getAllClassProfiles();
     res.json(profiles);
@@ -508,7 +672,7 @@ app.get('/api/class-profiles', (req, res) => {
   }
 });
 
-app.delete('/api/class-profiles/:id', (req, res) => {
+app.delete('/api/class-profiles/:id', requireAuth, (req, res) => {
   try {
     const { id } = req.params;
     db.deleteClassProfile(id);
@@ -519,7 +683,7 @@ app.delete('/api/class-profiles/:id', (req, res) => {
   }
 });
 
-app.post('/api/auto-book/:profileId', async (req, res) => {
+app.post('/api/auto-book/:profileId', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
@@ -581,6 +745,6 @@ cron.schedule('*/5 * * * *', async () => {
 
 app.listen(PORT, () => {
   logger.info(`YMCA Auto-Signup server running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  logger.info(`YMCA URL: ${process.env.YMCA_URL}`);
+  logger.info(`Environment: ${NODE_ENV}`);
+  logger.info(`YMCA URL: ${process.env.YMCA_URL || 'https://ymca-triangle.fisikal.com'}`);
 });

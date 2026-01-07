@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { Calendar, Clock, MapPin, User, CheckCircle, XCircle, RefreshCw, AlertCircle, Trash2, ListChecks } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useConfirm } from './ConfirmDialog';
 
 function SignupLogs() {
+  const { confirm } = useConfirm();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [cancellingId, setCancellingId] = useState(null);
@@ -33,17 +36,20 @@ function SignupLogs() {
   };
 
   const handleCancelBooking = async (occurrenceId) => {
-    if (!window.confirm('Are you sure you want to cancel this booking?')) {
-      return;
-    }
+    const confirmed = await confirm('Are you sure you want to cancel this booking?', {
+      title: 'Cancel Booking',
+      confirmText: 'Cancel Booking'
+    });
+    if (!confirmed) return;
     
     setCancellingId(occurrenceId);
     try {
       await api.delete(`/api/bookings/${occurrenceId}`);
+      toast.success('Booking cancelled successfully');
       await fetchBookings();
     } catch (error) {
       console.error('Failed to cancel booking:', error);
-      alert('Failed to cancel booking: ' + (error.response?.data?.error || error.message));
+      toast.error('Failed to cancel booking: ' + (error.response?.data?.error || error.message));
     } finally {
       setCancellingId(null);
     }

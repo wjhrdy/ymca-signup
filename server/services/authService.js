@@ -5,8 +5,28 @@ const db = require('../database');
 const API_BASE_URL = process.env.API_BASE_URL || 'https://ymca-triangle.fisikal.com/api/web';
 const YMCA_URL = process.env.YMCA_URL || 'https://ymca-triangle.fisikal.com';
 
+async function getCredentials() {
+  const dbCreds = await db.loadCredentials();
+  if (dbCreds && dbCreds.email && dbCreds.password) {
+    logger.debug('Using credentials from database');
+    return dbCreds;
+  }
+  
+  if (process.env.YMCA_EMAIL && process.env.YMCA_PASSWORD) {
+    logger.debug('Using credentials from environment variables');
+    return {
+      email: process.env.YMCA_EMAIL,
+      password: process.env.YMCA_PASSWORD
+    };
+  }
+  
+  throw new Error('No credentials configured. Please set credentials in Settings.');
+}
+
 async function loginWithAPI() {
   try {
+    const credentials = await getCredentials();
+    
     // Step 1: Get CSRF token and initial cookies from main page
     const initialResponse = await axios.get(YMCA_URL);
     const csrfMatch = initialResponse.data.match(/<meta name="csrf-token" content="([^"]+)"/);
@@ -26,8 +46,8 @@ async function loginWithAPI() {
     // Step 2: Login with CSRF token
     const loginData = {
       user: {
-        email: process.env.YMCA_EMAIL,
-        password: process.env.YMCA_PASSWORD,
+        email: credentials.email,
+        password: credentials.password,
         errors: null
       }
     };

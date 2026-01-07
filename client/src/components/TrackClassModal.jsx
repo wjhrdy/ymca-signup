@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Calendar, Clock, User, MapPin, AlertCircle, CheckCircle } from 'lucide-react';
 import api from '../api';
+import toast from 'react-hot-toast';
 
 function TrackClassModal({ classItem, onClose, onSuccess }) {
   const [step, setStep] = useState('options');
@@ -38,7 +39,7 @@ function TrackClassModal({ classItem, onClose, onSuccess }) {
       setStep('preview');
     } catch (error) {
       console.error('Failed to preview matches:', error);
-      alert('Failed to preview matches: ' + (error.response?.data?.error || error.message));
+      toast.error('Failed to preview matches: ' + (error.response?.data?.error || error.message));
     } finally {
       setLoading(false);
     }
@@ -62,14 +63,12 @@ function TrackClassModal({ classItem, onClose, onSuccess }) {
         autoSignup: options.autoSignup,
         signupHoursBefore: options.signupHoursBefore
       });
-      setStep('success');
-      setTimeout(() => {
-        onSuccess();
-        onClose();
-      }, 1500);
+      toast.success('Class added to tracking!');
+      onSuccess();
+      onClose();
     } catch (error) {
       console.error('Failed to track class:', error);
-      alert('Failed to track class: ' + (error.response?.data?.error || error.message));
+      toast.error('Failed to track class: ' + (error.response?.data?.error || error.message));
       setLoading(false);
     }
   };
