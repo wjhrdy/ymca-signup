@@ -756,7 +756,7 @@ cron.schedule('*/5 * * * *', async () => {
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   logger.info(`YMCA Auto-Signup server running on port ${PORT}`);
   logger.info(`Environment: ${NODE_ENV}`);
   logger.info(`YMCA URL: ${process.env.YMCA_URL || 'https://ymca-triangle.fisikal.com'}`);
