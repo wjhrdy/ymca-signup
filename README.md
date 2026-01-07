@@ -307,68 +307,21 @@ ymca-signup/
 - Frontend: React, Vite, TailwindCSS, Lucide icons
 - Auth: express-session + bcrypt
 
-## Key Features Explained
-
-### 🎯 Smart Class Tracking
-Instead of tracking individual class instances, you define matching rules. For example:
-- **Track "Yoga with Sarah on Mondays at 6pm"** - Gets you every Monday class
-- **Track "Any Spin class on Tuesdays"** - Flexible instructor
-- **Track "Pilates around 10am ±30min"** - Flexible timing
-
-The Preview feature shows exactly what will match before you commit!
-
-### 📍 Location Filtering
-In Settings, select your preferred YMCA locations. The app will only fetch and show classes from those locations, making browsing faster and more relevant.
-
-### ⚡ Infinite Scroll
-The class browser loads quickly with initial classes, then seamlessly loads more as you scroll. Search mode fetches the full month for comprehensive results.
-
-### 🔄 Zero Configuration Required
-No `.env` files to edit, no command-line setup. Just run Docker Compose, open your browser, and configure everything through the beautiful web UI.
-
 ## Contributing
 
-To extend this application:
+To extend this app:
 
-1. **Add new API endpoints** in `server/index.js`
-2. **Create new services** in `server/services/`
-3. **Add UI components** in `client/src/components/`
-4. **Update database schema** in `server/database.js` (uses migrations)
-5. **Test locally** with `npm run dev`
-6. **Build & test** with `docker-compose up --build`
+1. Add API endpoints in `server/index.js`
+2. Create new services in `server/services/`
+3. Add UI components in `client/src/components/`
+4. Update database schema in `server/database.js`
+5. Test with `npm run dev`
 
-## Support & Resources
+## Resources
 
-### For Issues
-- **Application Bugs**: Check `docker-compose logs -f` for detailed error messages
-- **YMCA Account Issues**: Contact your local YMCA or verify credentials at [YMCA Triangle](https://ymca-triangle.fisikal.com)
-- **Fisikal API**: [API Documentation](https://www.cuttingedge.fisikal.com/api/unified/docs)
-
-### Helpful Commands
-```bash
-# View logs in real-time
-docker-compose logs -f
-
-# Restart the application
-docker-compose restart
-
-# Reset everything (deletes database!)
-docker-compose down && rm -rf data/ && docker-compose up -d
-
-# Access database directly
-docker-compose exec ymca-signup sqlite3 /app/data/database.db
-```
+- YMCA Triangle: https://ymca-triangle.fisikal.com
+- Fisikal API docs: https://www.cuttingedge.fisikal.com/api/unified/docs
 
 ## License
 
-MIT - Free to use and modify
-
-## Acknowledgments
-
-- Built for YMCA Triangle area locations (Durham, Raleigh, Chapel Hill, Cary, etc.)
-- Uses Fisikal's class management system
-- Designed for reliability and ease of use
-
----
-
-**Happy Class Signing! 🏋️‍♀️🧘‍♂️💪**
+MIT
