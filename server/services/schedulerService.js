@@ -291,10 +291,18 @@ async function checkAndSignup(sessionCookie) {
 
           logger.info(`  ✓ ${statusMessage}: ${classToSignup.serviceName}`);
         } catch (error) {
-          // Handle already enrolled case - not a failure
+          // Handle already enrolled case - mark as success to prevent retries
           if (error.code === 'ALREADY_ENROLLED') {
             logger.info(`  ℹ️  Already enrolled: ${classToSignup.serviceName}`);
-            // Don't log as failed, just skip
+            await db.addSignupLog({
+              occurrenceId: classToSignup.id,
+              serviceName: classToSignup.serviceName,
+              trainerName: classToSignup.trainerName,
+              locationName: classToSignup.locationName,
+              classTime: classToSignup.startTime,
+              status: 'success',
+              errorMessage: 'Already enrolled'
+            });
             continue;
           }
           
