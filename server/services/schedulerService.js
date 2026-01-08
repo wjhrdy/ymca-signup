@@ -228,6 +228,12 @@ async function checkAndSignup(sessionCookie) {
           continue;
         }
 
+        // Skip if signup window has passed (negative hoursUntilSignupWindow)
+        if (hoursUntilSignupWindow < 0) {
+          logger.debug(`  ⏱️  Skipping: Signup window has passed (${Math.abs(hoursUntilSignupWindow).toFixed(2)} hours ago)`);
+          continue;
+        }
+
         if (now >= classTime) {
           logger.debug(`  ⏱️  Skipping: Class has already started/passed`);
           continue;
