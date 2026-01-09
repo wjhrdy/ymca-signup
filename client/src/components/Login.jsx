@@ -68,6 +68,7 @@ function Login({ onLoginSuccess }) {
                   placeholder="Enter your username"
                   required
                   autoFocus
+                  autoComplete="username"
                 />
               </div>
             </div>
@@ -85,6 +86,7 @@ function Login({ onLoginSuccess }) {
                   className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
                   placeholder="Enter your password"
                   required
+                  autoComplete="current-password"
                 />
               </div>
             </div>
