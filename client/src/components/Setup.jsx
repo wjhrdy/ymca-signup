@@ -85,6 +85,7 @@ function Setup({ onSetupComplete }) {
                   placeholder="Choose a username"
                   required
                   autoFocus
+                  autoComplete="username"
                 />
               </div>
               <p className="mt-1 text-xs text-gray-500">At least 3 characters</p>
@@ -103,6 +104,7 @@ function Setup({ onSetupComplete }) {
                   className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
                   placeholder="Choose a strong password"
                   required
+                  autoComplete="new-password"
                 />
               </div>
               <p className="mt-1 text-xs text-gray-500">At least 8 characters</p>
@@ -121,6 +123,7 @@ function Setup({ onSetupComplete }) {
                   className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
                   placeholder="Confirm your password"
                   required
+                  autoComplete="new-password"
                 />
               </div>
             </div>

@@ -191,6 +191,7 @@ function Settings() {
               onChange={(e) => updateCredentialField('email', e.target.value)}
               placeholder="your-email@example.com"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+              autoComplete="email"
             />
           </div>
 
@@ -206,6 +207,7 @@ function Settings() {
                 onChange={(e) => updateCredentialField('password', e.target.value)}
                 placeholder="••••••••"
                 className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                autoComplete="current-password"
               />
               <button
                 type="button"
