@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from './api';
-import { Calendar, Clock, MapPin, User, Plus, Trash2, Check, X, RefreshCw, Settings as SettingsIcon, LogOut } from 'lucide-react';
+import { Calendar, Clock, MapPin, User, Plus, Trash2, Check, X, RefreshCw, Settings as SettingsIcon, LogOut, Link2 } from 'lucide-react';
 import ClassBrowser from './components/ClassBrowser';
 import TrackedClasses from './components/TrackedClasses';
 import SignupLogs from './components/SignupLogs';
@@ -121,73 +121,80 @@ function App() {
       <Toaster position="top-center" />
       <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 py-4">
+        <div className="max-w-7xl mx-auto px-3 py-3 sm:px-4 sm:py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Calendar className="w-8 h-8 text-primary" />
+            <div className="flex items-center space-x-2 sm:space-x-3">
+              <Calendar className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">YMCA Auto-Signup</h1>
-                <p className="text-sm text-gray-500">Automated class registration system</p>
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
+                  <span className="sm:hidden">YMCA</span>
+                  <span className="hidden sm:inline">YMCA Auto-Signup</span>
+                </h1>
+                <p className="hidden sm:block text-sm text-gray-500">Automated class registration system</p>
               </div>
             </div>
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2 sm:space-x-4">
               {authState.user && (
-                <div className="flex items-center space-x-2 px-3 py-1.5 bg-gray-100 rounded-lg">
+                <div className="hidden md:flex items-center space-x-2 px-3 py-1.5 bg-gray-100 rounded-lg">
                   <User className="w-4 h-4 text-gray-600" />
                   <span className="text-sm font-medium text-gray-700">{authState.user.username}</span>
                 </div>
               )}
               {status?.authenticated && status?.user ? (
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-2 sm:space-x-3">
                   {status.user.imageUrl ? (
-                    <img 
-                      src={status.user.imageUrl} 
+                    <img
+                      src={status.user.imageUrl}
                       alt={`${status.user.firstName} ${status.user.lastName}`}
-                      className="w-10 h-10 rounded-full object-cover border-2 border-gray-200"
+                      className="w-8 h-8 sm:w-10 sm:h-10 rounded-full object-cover border-2 border-gray-200"
                     />
                   ) : (
-                    <div className="w-10 h-10 rounded-full bg-primary text-white flex items-center justify-center font-semibold border-2 border-gray-200">
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-primary text-white flex items-center justify-center font-semibold text-sm sm:text-base border-2 border-gray-200">
                       {status.user.firstName?.charAt(0)}{status.user.lastName?.charAt(0)}
                     </div>
                   )}
-                  <span className="text-sm font-medium text-gray-700">
+                  <span className="hidden sm:inline text-sm font-medium text-gray-700">
                     {status.user.firstName} {status.user.lastName?.charAt(0)}.
                   </span>
                 </div>
               ) : status?.authenticated ? (
                 <div className="flex items-center space-x-2">
                   <div className="w-3 h-3 rounded-full bg-green-500" />
-                  <span className="text-sm text-gray-600">YMCA Connected</span>
+                  <span className="hidden sm:inline text-sm text-gray-600">YMCA Connected</span>
                 </div>
               ) : (
                 <div className="flex items-center space-x-2">
                   <div className="w-3 h-3 rounded-full bg-red-500" />
-                  <span className="text-sm text-gray-600">YMCA Not Connected</span>
+                  <span className="hidden sm:inline text-sm text-gray-600">YMCA Not Connected</span>
                 </div>
               )}
               {!status?.authenticated && (
                 <button
                   onClick={handleLogin}
                   disabled={loading}
-                  className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+                  className="p-2 sm:px-4 sm:py-2 bg-primary text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+                  title="Connect YMCA"
                 >
                   {loading ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Connecting...</span>
+                      <span className="hidden sm:inline">Connecting...</span>
                     </>
                   ) : (
-                    <span>Connect YMCA</span>
+                    <>
+                      <Link2 className="w-4 h-4" />
+                      <span className="hidden sm:inline">Connect YMCA</span>
+                    </>
                   )}
                 </button>
               )}
               <button
                 onClick={handleLogout}
-                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg flex items-center space-x-2 transition-colors"
+                className="p-2 sm:px-4 sm:py-2 text-gray-700 hover:bg-gray-100 rounded-lg flex items-center space-x-2 transition-colors"
                 title="Logout"
               >
                 <LogOut className="w-4 h-4" />
-                <span>Logout</span>
+                <span className="hidden sm:inline">Logout</span>
               </button>
             </div>
           </div>
