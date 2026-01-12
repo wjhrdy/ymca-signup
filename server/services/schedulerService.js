@@ -233,6 +233,18 @@ async function checkAndSignup(sessionCookie) {
           continue;
         }
 
+        // Skip if already enrolled (from YMCA API)
+        if (classToSignup.isJoined) {
+          logger.debug(`  ⏭️  Skipping: Already enrolled in this class (from YMCA API)`);
+          continue;
+        }
+
+        // Skip if already on waitlist (from YMCA API)
+        if (classToSignup.isWaited) {
+          logger.debug(`  ⏭️  Skipping: Already on waitlist for this class (from YMCA API)`);
+          continue;
+        }
+
         const existingLog = await db.getSignupLogs(1000);
         const successfulSignup = existingLog.find(log => 
           log.occurrence_id === classToSignup.id && 
