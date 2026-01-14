@@ -276,15 +276,15 @@ async function checkAndSignup(sessionCookie) {
 
         logger.info(`  ✅ ATTEMPTING TO BOOK: ${classToSignup.serviceName} at ${classTime}`);
         
-        // IMPORTANT: Never use cached lock_version - it changes frequently
-        // Always let signupForClass fetch fresh occurrence details to get latest lock_version
-        logger.debug(`  🔄 Will fetch fresh lock_version immediately before signup...`);
+        // Use the lock_version from the class data that was already fetched
+        // The /schedule/occurrences/{id} endpoint returns 404, so we can't re-fetch
+        logger.debug(`  🔄 Using lock_version ${classToSignup.lock_version} from class data`);
         
         try {
           const result = await classService.signupForClass(
-            sessionCookie, 
-            classToSignup.id, 
-            null, // Always pass null to force fresh lock_version fetch
+            sessionCookie,
+            classToSignup.id,
+            classToSignup.lock_version, // Use lock_version from already-fetched class data
             true, // tryWaitlist
             classToSignup.waitingListEnabled
           );
