@@ -749,8 +749,18 @@ app.post('/api/auto-book/:profileId', requireAuth, async (req, res) => {
     }
   });
 
+  // Generate a random offset (0-59 seconds) on startup to stagger signup attempts
+  // across different instances of the app, reducing competition for popular classes
+  const schedulerOffsetSeconds = Math.floor(Math.random() * 60);
+  logger.info(`Scheduler configured with ${schedulerOffsetSeconds}s random offset to reduce signup competition`);
+
   // Setup cron schedule
   cron.schedule('*/5 * * * *', async () => {
+    // Wait for the random offset before running
+    if (schedulerOffsetSeconds > 0) {
+      logger.debug(`Waiting ${schedulerOffsetSeconds}s (random offset)...`);
+      await new Promise(resolve => setTimeout(resolve, schedulerOffsetSeconds * 1000));
+    }
     logger.debug('Running scheduler check...');
     try {
       const hasCredentials = await db.hasCredentials();

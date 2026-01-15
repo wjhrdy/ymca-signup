@@ -101,22 +101,24 @@ async function checkAndSignup(sessionCookie) {
       // OPTIMIZATION: Extract unique service IDs and trainer IDs from tracked classes
       // This dramatically reduces API payload by only fetching relevant classes
       const serviceIds = [...new Set(autoSignupClasses.map(c => c.service_id).filter(Boolean))];
-      
-      // Only include trainer IDs for classes that require specific trainer matching
-      const trainerIds = [...new Set(
+
+      // Only apply trainer filter if ALL tracked classes require specific trainers
+      // If ANY class has match_trainer=false (any trainer), we need to fetch all trainers
+      const hasAnyTrainerMatch = autoSignupClasses.some(c => !c.match_trainer || !c.trainer_id);
+      const trainerIds = hasAnyTrainerMatch ? [] : [...new Set(
         autoSignupClasses
           .filter(c => c.match_trainer && c.trainer_id)
           .map(c => c.trainer_id)
       )];
-      
-      logger.debug(`Fetching classes for ${serviceIds.length} services${trainerIds.length > 0 ? ` and ${trainerIds.length} trainers` : ''}`);
-      
+
+      logger.debug(`Fetching classes for ${serviceIds.length} services${trainerIds.length > 0 ? ` and ${trainerIds.length} trainers` : ' (all trainers)'}`);
+
       // Skip enrollment verification during regular checks - only verify when actually attempting signup
       allClasses = await classService.fetchClasses(sessionCookie, {
         startDate: now.toISOString(),
         endDate: endDate.toISOString(),
         serviceIds: serviceIds,  // OPTIMIZATION: Only fetch tracked services
-        trainerIds: trainerIds.length > 0 ? trainerIds : undefined,  // OPTIMIZATION: Only fetch specific trainers if required
+        trainerIds: trainerIds.length > 0 ? trainerIds : undefined,  // Only filter trainers if ALL classes need specific trainers
         verifyBookings: false // Skip expensive enrollment verification call
       });
       
@@ -245,9 +247,16 @@ async function checkAndSignup(sessionCookie) {
           continue;
         }
 
+        // Skip if class is full and waitlist is not enabled
+        // But if waitlist IS enabled, we should still attempt to join the waitlist
+        if (classToSignup.fullGroup && !classToSignup.canSignup && !classToSignup.waitingListEnabled) {
+          logger.debug(`  ⏭️  Skipping: Class is full and waitlist not enabled`);
+          continue;
+        }
+
         const existingLog = await db.getSignupLogs(1000);
-        const successfulSignup = existingLog.find(log => 
-          log.occurrence_id === classToSignup.id && 
+        const successfulSignup = existingLog.find(log =>
+          log.occurrence_id === classToSignup.id &&
           log.status === 'success'
         );
 
@@ -256,8 +265,8 @@ async function checkAndSignup(sessionCookie) {
           continue;
         }
 
-        const failedAttempts = existingLog.filter(log => 
-          log.occurrence_id === classToSignup.id && 
+        const failedAttempts = existingLog.filter(log =>
+          log.occurrence_id === classToSignup.id &&
           log.status === 'failed'
         );
 
