@@ -282,10 +282,13 @@ async function checkAndSignup(sessionCookie) {
           continue;
         }
 
-        // Skip if class is full and waitlist is not enabled
-        // But if waitlist IS enabled, we should still attempt to join the waitlist
-        if (classToSignup.fullGroup && !classToSignup.canSignup && !classToSignup.waitingListEnabled) {
-          logger.debug(`  ⏭️  Skipping: Class is full and waitlist not enabled`);
+        // Skip if class is full and can't join waitlist
+        // canJoinWaitlist already checks: waitlistEnabled, waitlistHasRoom (< limit), etc.
+        if (classToSignup.fullGroup && !classToSignup.canSignup && !classToSignup.canJoinWaitlist) {
+          const reason = !classToSignup.waitingListEnabled
+            ? 'waitlist not enabled'
+            : 'waitlist is full';
+          logger.debug(`  ⏭️  Skipping: Class is full and ${reason}`);
           continue;
         }
 
