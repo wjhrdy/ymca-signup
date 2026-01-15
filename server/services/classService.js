@@ -138,19 +138,32 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
       }
     });
     
-    const enrolledClasses = response.data?.data || [];
-    const enrolledOccurrenceIds = new Set(enrolledClasses.map(c => c.id));
-    
-    logger.debug(`Found ${enrolledClasses.length} enrolled classes (filtered by ${uniqueServiceIds.length} services). IDs:`, Array.from(enrolledOccurrenceIds).slice(0, 10));
-    
+    const allBookings = response.data?.data || [];
+
+    // Separate enrolled bookings (is_joined=true) from waitlisted bookings (is_waited=true)
+    const enrolledOccurrenceIds = new Set(
+      allBookings.filter(b => b.is_joined).map(b => b.id)
+    );
+    const waitlistedOccurrenceIds = new Set(
+      allBookings.filter(b => b.is_waited).map(b => b.id)
+    );
+
+    logger.debug(`Found ${allBookings.length} bookings (${enrolledOccurrenceIds.size} enrolled, ${waitlistedOccurrenceIds.size} waitlisted)`);
+
     classes.forEach(cls => {
       const actuallyEnrolled = enrolledOccurrenceIds.has(cls.id);
+      const actuallyWaitlisted = waitlistedOccurrenceIds.has(cls.id);
 
       if (actuallyEnrolled !== cls.isJoined) {
         logger.debug(`✓ Corrected enrollment for class ${cls.id} (${cls.serviceName}): was ${cls.isJoined}, now ${actuallyEnrolled}`);
       }
 
+      if (actuallyWaitlisted !== cls.isWaited) {
+        logger.debug(`✓ Corrected waitlist status for class ${cls.id} (${cls.serviceName}): was ${cls.isWaited}, now ${actuallyWaitlisted}`);
+      }
+
       cls.isJoined = actuallyEnrolled;
+      cls.isWaited = actuallyWaitlisted;
 
       const classStartTime = new Date(cls.startTime);
       const restrictHours = cls.restrictToBookInAdvanceHours || 0;
@@ -176,7 +189,8 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
     });
 
     const joinedCount = classes.filter(c => c.isJoined).length;
-    logger.debug(`Enrollment verification complete. Classes with isJoined=true: ${joinedCount} out of ${classes.length}`);
+    const waitedCount = classes.filter(c => c.isWaited).length;
+    logger.debug(`Booking verification complete. Enrolled: ${joinedCount}, Waitlisted: ${waitedCount} out of ${classes.length} classes`);
     
     return classes;
   } catch (error) {
