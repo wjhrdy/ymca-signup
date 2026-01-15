@@ -131,16 +131,33 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
 
     try {
       const classData = classes.find(c => c.id === classId);
-      const payload = classData?.lock_version !== undefined 
+      const payload = classData?.lock_version !== undefined
         ? { lock_version: classData.lock_version }
         : {};
-      
+
       await api.post(`/api/signup/${classId}`, payload);
       toast.success('Successfully signed up for class!');
       fetchClasses();
     } catch (error) {
       console.error('Signup failed:', error);
       toast.error('Signup failed: ' + (error.response?.data?.error || error.message));
+    }
+  };
+
+  const signupWaitlist = async (classId) => {
+    const confirmed = await confirm('Join the waitlist for this class?', {
+      title: 'Join Waitlist',
+      confirmText: 'Join Waitlist'
+    });
+    if (!confirmed) return;
+
+    try {
+      await api.post(`/api/waitlist/${classId}`);
+      toast.success('Successfully joined the waitlist!');
+      fetchClasses();
+    } catch (error) {
+      console.error('Waitlist signup failed:', error);
+      toast.error('Waitlist signup failed: ' + (error.response?.data?.error || error.message));
     }
   };
 
@@ -426,6 +443,11 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
                     Available
                   </span>
                 )}
+                {!classItem.isJoined && classItem.canJoinWaitlist && (
+                  <span className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-medium rounded">
+                    Waitlist Available
+                  </span>
+                )}
               </div>
 
               <div className="flex space-x-2">
@@ -470,6 +492,13 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
                     className="flex-1 px-4 py-2 bg-primary text-white rounded-lg hover:bg-blue-700 flex items-center justify-center"
                   >
                     <span>Sign Up Now</span>
+                  </button>
+                ) : classItem.canJoinWaitlist ? (
+                  <button
+                    onClick={() => signupWaitlist(classItem.id)}
+                    className="flex-1 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 flex items-center justify-center"
+                  >
+                    <span>Sign Up for Waitlist</span>
                   </button>
                 ) : null}
               </div>

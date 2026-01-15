@@ -511,16 +511,41 @@ app.post('/api/signup/:occurrenceId', requireAuth, async (req, res) => {
       await db.saveSession(sessionCookie);
       logger.info('Session saved to database');
     }
-    
+
     const { occurrenceId } = req.params;
     const { lock_version } = req.body;
-    
+
     logger.info(`Signup request for occurrence ${occurrenceId}${lock_version !== undefined ? ` with lock_version: ${lock_version}` : ' (no lock_version provided)'}`);
-    
+
     const result = await classService.signupForClass(sessionCookie, occurrenceId, lock_version);
     res.json({ success: true, result });
   } catch (error) {
     logger.error('Signup error:', error);
+    if (error.message.includes('401') || error.response?.status === 401) {
+      sessionCookie = null;
+      await db.clearSession();
+      logger.info('Session cleared from database');
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/waitlist/:occurrenceId', requireAuth, async (req, res) => {
+  try {
+    if (!sessionCookie) {
+      sessionCookie = await authService.login();
+      await db.saveSession(sessionCookie);
+      logger.info('Session saved to database');
+    }
+
+    const { occurrenceId } = req.params;
+
+    logger.info(`Waitlist join request for occurrence ${occurrenceId}`);
+
+    const result = await classService.joinWaitlist(sessionCookie, occurrenceId);
+    res.json({ success: true, result });
+  } catch (error) {
+    logger.error('Waitlist join error:', error);
     if (error.message.includes('401') || error.response?.status === 401) {
       sessionCookie = null;
       await db.clearSession();

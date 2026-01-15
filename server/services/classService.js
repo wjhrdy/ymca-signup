@@ -73,13 +73,21 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
       const bookingWindowOpen = restrictHours === 0 || 
         (classStartTime.getTime() - now.getTime()) <= (restrictHours * 60 * 60 * 1000);
       
-      cls.canSignup = !cls.isJoined && 
-                     !cls.fullGroup && 
+      cls.canSignup = !cls.isJoined &&
+                     !cls.fullGroup &&
                      bookingWindowOpen &&
                      now < classStartTime &&
                      (cls.status === 'Scheduled' || cls.status === 'Rescheduled');
+
+      cls.canJoinWaitlist = !cls.isJoined &&
+                           !cls.isWaited &&
+                           cls.fullGroup &&
+                           cls.waitingListEnabled &&
+                           bookingWindowOpen &&
+                           now < classStartTime &&
+                           (cls.status === 'Scheduled' || cls.status === 'Rescheduled');
     });
-    
+
     const joinedCount = classes.filter(c => c.isJoined).length;
     logger.debug(`Classes with isJoined=true: ${joinedCount} out of ${classes.length}`);
     
@@ -142,13 +150,21 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
       const bookingWindowOpen = restrictHours === 0 || 
         (classStartTime.getTime() - now.getTime()) <= (restrictHours * 60 * 60 * 1000);
       
-      cls.canSignup = !cls.isJoined && 
-                     !cls.fullGroup && 
+      cls.canSignup = !cls.isJoined &&
+                     !cls.fullGroup &&
                      bookingWindowOpen &&
                      now < classStartTime &&
                      (cls.status === 'Scheduled' || cls.status === 'Rescheduled');
+
+      cls.canJoinWaitlist = !cls.isJoined &&
+                           !cls.isWaited &&
+                           cls.fullGroup &&
+                           cls.waitingListEnabled &&
+                           bookingWindowOpen &&
+                           now < classStartTime &&
+                           (cls.status === 'Scheduled' || cls.status === 'Rescheduled');
     });
-    
+
     const joinedCount = classes.filter(c => c.isJoined).length;
     logger.debug(`Enrollment verification complete. Classes with isJoined=true: ${joinedCount} out of ${classes.length}`);
     
@@ -264,12 +280,21 @@ async function fetchClasses(sessionCookie, filters = {}) {
           const bookingWindowOpen = restrictHours === 0 || 
             (classStartTime.getTime() - now.getTime()) <= (restrictHours * 60 * 60 * 1000);
           
-          const canSignup = !occurrence.is_joined && 
-                           !occurrence.full_group && 
+          const canSignup = !occurrence.is_joined &&
+                           !occurrence.full_group &&
                            bookingWindowOpen &&
                            now < classStartTime &&
                            (occurrence.status === 'Scheduled' || occurrence.status === 'Rescheduled');
-          
+
+          // Can join waitlist if class is full but waitlist is enabled
+          const canJoinWaitlist = !occurrence.is_joined &&
+                                  !occurrence.is_waited &&
+                                  occurrence.full_group &&
+                                  occurrence.waiting_list_enabled &&
+                                  bookingWindowOpen &&
+                                  now < classStartTime &&
+                                  (occurrence.status === 'Scheduled' || occurrence.status === 'Rescheduled');
+
           const spotsTotal = occurrence.service_group_size || 0;
           const attendedCount = occurrence.attended_clients_count || 0;
           const spotsAvailable = Math.max(0, spotsTotal - attendedCount);
@@ -299,6 +324,7 @@ async function fetchClasses(sessionCookie, filters = {}) {
             positionOnWaitingList: occurrence.position_on_waiting_list,
             totalOnWaitingList: occurrence.total_on_waiting_list,
             canSignup,
+            canJoinWaitlist,
             restrictToBookInAdvanceHours: occurrence.restrict_to_book_in_advance_time_in_hours,
             lock_version: occurrence.lock_version
           };
