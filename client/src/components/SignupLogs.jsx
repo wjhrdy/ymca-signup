@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
+import * as classActions from '../services/classActions';
 import { Calendar, Clock, MapPin, User, CheckCircle, XCircle, RefreshCw, AlertCircle, Trash2, ListChecks, LogOut, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useConfirm } from './ConfirmDialog';
@@ -44,7 +45,7 @@ function SignupLogs() {
 
     setActionInProgress(occurrenceId);
     try {
-      await api.delete(`/api/bookings/${occurrenceId}`);
+      await classActions.cancelBooking(occurrenceId);
       toast.success('Booking cancelled successfully');
       await fetchBookings();
     } catch (error) {
@@ -67,7 +68,7 @@ function SignupLogs() {
 
     setActionInProgress(occurrenceId);
     try {
-      await api.delete(`/api/bookings/${occurrenceId}/late-cancel`);
+      await classActions.lateCancelBooking(occurrenceId);
       toast.success('Booking late cancelled successfully');
       await fetchBookings();
     } catch (error) {
@@ -87,7 +88,7 @@ function SignupLogs() {
 
     setActionInProgress(occurrenceId);
     try {
-      await api.delete(`/api/waitlist/${occurrenceId}`);
+      await classActions.leaveWaitlist(occurrenceId);
       toast.success('Left waitlist successfully');
       await fetchBookings();
     } catch (error) {

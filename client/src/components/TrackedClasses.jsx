@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
+import * as classActions from '../services/classActions';
 import { Calendar, Clock, MapPin, User, Trash2, Settings, RefreshCw, ToggleLeft, ToggleRight, Eye, BookOpen, X, UserX, ListOrdered } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useConfirm } from './ConfirmDialog';
@@ -128,13 +129,7 @@ function TrackedClasses() {
     setBookingClass(occurrenceId);
     try {
       const occurrence = previewClasses.find(c => c.id === occurrenceId);
-      const payload = occurrence?.lock_version !== undefined 
-        ? { lock_version: occurrence.lock_version }
-        : {};
-      
-      console.log(`Booking class ${occurrenceId} with payload:`, payload);
-      
-      await api.post(`/api/signup/${occurrenceId}`, payload);
+      await classActions.signupForClass(occurrenceId, occurrence?.lock_version);
       toast.success('Successfully signed up for class!');
       const updatedClassItem = classes.find(c => c.id === previewingId);
       if (updatedClassItem) {
@@ -157,7 +152,7 @@ function TrackedClasses() {
 
     setBookingClass(occurrenceId);
     try {
-      await api.delete(`/api/bookings/${occurrenceId}`);
+      await classActions.cancelBooking(occurrenceId);
       toast.success('Successfully cancelled class!');
       const updatedClassItem = classes.find(c => c.id === previewingId);
       if (updatedClassItem) {
@@ -180,7 +175,7 @@ function TrackedClasses() {
 
     setBookingClass(occurrenceId);
     try {
-      await api.post(`/api/waitlist/${occurrenceId}`);
+      await classActions.joinWaitlist(occurrenceId);
       toast.success('Successfully joined the waitlist!');
       const updatedClassItem = classes.find(c => c.id === previewingId);
       if (updatedClassItem) {
@@ -203,7 +198,7 @@ function TrackedClasses() {
 
     setBookingClass(occurrenceId);
     try {
-      await api.delete(`/api/waitlist/${occurrenceId}`);
+      await classActions.leaveWaitlist(occurrenceId);
       toast.success('Successfully left the waitlist!');
       const updatedClassItem = classes.find(c => c.id === previewingId);
       if (updatedClassItem) {

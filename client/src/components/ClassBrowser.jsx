@@ -5,6 +5,7 @@ import Fuse from 'fuse.js';
 import TrackClassModal from './TrackClassModal';
 import toast from 'react-hot-toast';
 import { useConfirm } from './ConfirmDialog';
+import * as classActions from '../services/classActions';
 
 function ClassBrowser({ authenticated, onNavigateToTracked }) {
   const { confirm } = useConfirm();
@@ -131,11 +132,7 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
 
     try {
       const classData = classes.find(c => c.id === classId);
-      const payload = classData?.lock_version !== undefined
-        ? { lock_version: classData.lock_version }
-        : {};
-
-      await api.post(`/api/signup/${classId}`, payload);
+      await classActions.signupForClass(classId, classData?.lock_version);
       toast.success('Successfully signed up for class!');
       fetchClasses();
     } catch (error) {
@@ -152,7 +149,7 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
     if (!confirmed) return;
 
     try {
-      await api.post(`/api/waitlist/${classId}`);
+      await classActions.joinWaitlist(classId);
       toast.success('Successfully joined the waitlist!');
       fetchClasses();
     } catch (error) {
@@ -170,7 +167,7 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
 
     setCancellingClass(classId);
     try {
-      await api.delete(`/api/bookings/${classId}`);
+      await classActions.cancelBooking(classId);
       toast.success('Successfully cancelled class!');
       fetchClasses();
     } catch (error) {
