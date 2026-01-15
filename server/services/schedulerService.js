@@ -293,18 +293,33 @@ async function checkAndSignup(sessionCookie) {
         }
 
         const existingLog = await db.getSignupLogs(1000);
+
+        // Check if we've already successfully signed up for this occurrence
+        // Once we've signed up, we should NEVER re-book, even if the user cancels externally
+        // Use String() comparison to handle type mismatches (DB stores as TEXT, API may return number)
         const successfulSignup = existingLog.find(log =>
-          log.occurrence_id === classToSignup.id &&
+          String(log.occurrence_id) === String(classToSignup.id) &&
           log.status === 'success'
         );
 
         if (successfulSignup) {
-          logger.debug(`  ⏭️  Skipping: Already signed up for this class`);
+          logger.debug(`  ⏭️  Skipping: Already signed up for this occurrence (won't re-book even if cancelled)`);
+          continue;
+        }
+
+        // Also skip if user explicitly cancelled through our app
+        const cancelledSignup = existingLog.find(log =>
+          String(log.occurrence_id) === String(classToSignup.id) &&
+          log.status === 'cancelled'
+        );
+
+        if (cancelledSignup) {
+          logger.debug(`  ⏭️  Skipping: User cancelled this occurrence`);
           continue;
         }
 
         const failedAttempts = existingLog.filter(log =>
-          log.occurrence_id === classToSignup.id &&
+          String(log.occurrence_id) === String(classToSignup.id) &&
           log.status === 'failed'
         );
 

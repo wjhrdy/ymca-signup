@@ -606,6 +606,19 @@ app.delete('/api/bookings/:occurrenceId', requireAuth, async (req, res) => {
 
     const { occurrenceId } = req.params;
     const result = await classService.cancelBooking(sessionCookie, occurrenceId);
+
+    // Log the cancellation so the scheduler knows not to re-book this class
+    await db.addSignupLog({
+      occurrenceId: occurrenceId,
+      serviceName: 'Cancelled booking',
+      trainerName: null,
+      locationName: null,
+      classTime: null,
+      status: 'cancelled',
+      errorMessage: 'User cancelled booking'
+    });
+    logger.info(`Logged cancellation for occurrence ${occurrenceId} to prevent re-booking`);
+
     res.json({ success: true, result });
   } catch (error) {
     logger.error('Cancel booking error:', error);
@@ -628,6 +641,19 @@ app.delete('/api/bookings/:occurrenceId/late-cancel', requireAuth, async (req, r
 
     const { occurrenceId } = req.params;
     const result = await classService.lateCancelBooking(sessionCookie, occurrenceId);
+
+    // Log the cancellation so the scheduler knows not to re-book this class
+    await db.addSignupLog({
+      occurrenceId: occurrenceId,
+      serviceName: 'Late cancelled booking',
+      trainerName: null,
+      locationName: null,
+      classTime: null,
+      status: 'cancelled',
+      errorMessage: 'User late cancelled booking'
+    });
+    logger.info(`Logged late cancellation for occurrence ${occurrenceId} to prevent re-booking`);
+
     res.json({ success: true, result });
   } catch (error) {
     logger.error('Late cancel booking error:', error);
@@ -650,6 +676,19 @@ app.delete('/api/waitlist/:occurrenceId', requireAuth, async (req, res) => {
 
     const { occurrenceId } = req.params;
     const result = await classService.leaveWaitlist(sessionCookie, occurrenceId);
+
+    // Log the cancellation so the scheduler knows not to re-book this class
+    await db.addSignupLog({
+      occurrenceId: occurrenceId,
+      serviceName: 'Left waitlist',
+      trainerName: null,
+      locationName: null,
+      classTime: null,
+      status: 'cancelled',
+      errorMessage: 'User left waitlist'
+    });
+    logger.info(`Logged waitlist departure for occurrence ${occurrenceId} to prevent re-booking`);
+
     res.json({ success: true, result });
   } catch (error) {
     logger.error('Leave waitlist error:', error);
