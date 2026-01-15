@@ -465,7 +465,8 @@ async function joinWaitlist(sessionCookie, occurrenceId) {
     const formData = new URLSearchParams();
     formData.append('json', JSON.stringify({}));
 
-    const response = await axios.post(
+    // YMCA uses PUT for waitlist, not POST
+    const response = await axios.put(
       `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/wait`,
       formData.toString(),
       {
