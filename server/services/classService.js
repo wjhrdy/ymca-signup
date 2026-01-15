@@ -63,26 +63,33 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
     return classes;
   }
 
+  // Get waitlist limit from config
+  const appConfig = config.getConfig();
+  const waitlistLimit = appConfig.waitlistLimit ?? 5;
+
   if (!clientId) {
     logger.debug('No client ID available, using is_joined flags from occurrences API');
     const now = new Date();
-    
+
     classes.forEach(cls => {
       const classStartTime = new Date(cls.startTime);
       const restrictHours = cls.restrictToBookInAdvanceHours || 0;
-      const bookingWindowOpen = restrictHours === 0 || 
+      const bookingWindowOpen = restrictHours === 0 ||
         (classStartTime.getTime() - now.getTime()) <= (restrictHours * 60 * 60 * 1000);
-      
+
       cls.canSignup = !cls.isJoined &&
                      !cls.fullGroup &&
                      bookingWindowOpen &&
                      now < classStartTime &&
                      (cls.status === 'Scheduled' || cls.status === 'Rescheduled');
 
+      // Check if waitlist has room (totalOnWaitingList < waitlistLimit)
+      const waitlistHasRoom = (cls.totalOnWaitingList || 0) < waitlistLimit;
       cls.canJoinWaitlist = !cls.isJoined &&
                            !cls.isWaited &&
                            cls.fullGroup &&
                            cls.waitingListEnabled &&
+                           waitlistHasRoom &&
                            bookingWindowOpen &&
                            now < classStartTime &&
                            (cls.status === 'Scheduled' || cls.status === 'Rescheduled');
@@ -138,28 +145,31 @@ async function enrichClassesWithBookingStatus(sessionCookie, classes, clientId) 
     
     classes.forEach(cls => {
       const actuallyEnrolled = enrolledOccurrenceIds.has(cls.id);
-      
+
       if (actuallyEnrolled !== cls.isJoined) {
         logger.debug(`✓ Corrected enrollment for class ${cls.id} (${cls.serviceName}): was ${cls.isJoined}, now ${actuallyEnrolled}`);
       }
-      
+
       cls.isJoined = actuallyEnrolled;
-      
+
       const classStartTime = new Date(cls.startTime);
       const restrictHours = cls.restrictToBookInAdvanceHours || 0;
-      const bookingWindowOpen = restrictHours === 0 || 
+      const bookingWindowOpen = restrictHours === 0 ||
         (classStartTime.getTime() - now.getTime()) <= (restrictHours * 60 * 60 * 1000);
-      
+
       cls.canSignup = !cls.isJoined &&
                      !cls.fullGroup &&
                      bookingWindowOpen &&
                      now < classStartTime &&
                      (cls.status === 'Scheduled' || cls.status === 'Rescheduled');
 
+      // Check if waitlist has room (totalOnWaitingList < waitlistLimit)
+      const waitlistHasRoom = (cls.totalOnWaitingList || 0) < waitlistLimit;
       cls.canJoinWaitlist = !cls.isJoined &&
                            !cls.isWaited &&
                            cls.fullGroup &&
                            cls.waitingListEnabled &&
+                           waitlistHasRoom &&
                            bookingWindowOpen &&
                            now < classStartTime &&
                            (cls.status === 'Scheduled' || cls.status === 'Rescheduled');
@@ -286,11 +296,14 @@ async function fetchClasses(sessionCookie, filters = {}) {
                            now < classStartTime &&
                            (occurrence.status === 'Scheduled' || occurrence.status === 'Rescheduled');
 
-          // Can join waitlist if class is full but waitlist is enabled
+          // Can join waitlist if class is full but waitlist is enabled and has room
+          const waitlistLimit = appConfig.waitlistLimit ?? 5;
+          const waitlistHasRoom = (occurrence.total_on_waiting_list || 0) < waitlistLimit;
           const canJoinWaitlist = !occurrence.is_joined &&
                                   !occurrence.is_waited &&
                                   occurrence.full_group &&
                                   occurrence.waiting_list_enabled &&
+                                  waitlistHasRoom &&
                                   bookingWindowOpen &&
                                   now < classStartTime &&
                                   (occurrence.status === 'Scheduled' || occurrence.status === 'Rescheduled');

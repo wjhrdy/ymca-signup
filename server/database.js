@@ -179,9 +179,15 @@ function createTables() {
         default_signup_hours_before INTEGER,
         default_days_ahead INTEGER,
         max_classes_per_fetch INTEGER,
+        waitlist_limit INTEGER DEFAULT 5,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    // Migration: Add waitlist_limit column if it doesn't exist
+    db.run(`ALTER TABLE app_settings ADD COLUMN waitlist_limit INTEGER DEFAULT 5`, (err) => {
+      // Ignore error if column already exists
+    });
     
     db.run(`
       CREATE TABLE IF NOT EXISTS credentials (
@@ -533,21 +539,22 @@ function getClientId() {
 
 function saveSettings(settings) {
   return new Promise((resolve, reject) => {
-    const preferredLocations = Array.isArray(settings.preferredLocations) 
-      ? JSON.stringify(settings.preferredLocations) 
+    const preferredLocations = Array.isArray(settings.preferredLocations)
+      ? JSON.stringify(settings.preferredLocations)
       : settings.preferredLocations;
-    
+
     db.run(
-      `INSERT OR REPLACE INTO app_settings 
-       (id, preferred_locations, check_interval_minutes, default_signup_hours_before, 
-        default_days_ahead, max_classes_per_fetch, updated_at) 
-       VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      `INSERT OR REPLACE INTO app_settings
+       (id, preferred_locations, check_interval_minutes, default_signup_hours_before,
+        default_days_ahead, max_classes_per_fetch, waitlist_limit, updated_at)
+       VALUES (1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
       [
         preferredLocations,
         settings.checkIntervalMinutes,
         settings.defaultSignupHoursBefore,
         settings.defaultDaysAhead,
-        settings.maxClassesPerFetch
+        settings.maxClassesPerFetch,
+        settings.waitlistLimit ?? 5
       ],
       (err) => {
         if (err) reject(err);
@@ -568,7 +575,8 @@ function loadSettings() {
           checkIntervalMinutes: row.check_interval_minutes,
           defaultSignupHoursBefore: row.default_signup_hours_before,
           defaultDaysAhead: row.default_days_ahead,
-          maxClassesPerFetch: row.max_classes_per_fetch
+          maxClassesPerFetch: row.max_classes_per_fetch,
+          waitlistLimit: row.waitlist_limit ?? 5
         };
         resolve(settings);
       }

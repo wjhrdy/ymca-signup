@@ -33,7 +33,8 @@ function loadDefaultsFromExample() {
     classFetch: {
       defaultDaysAhead: 7,
       maxClassesPerFetch: 5000
-    }
+    },
+    waitlistLimit: 5
   };
 }
 
@@ -52,7 +53,8 @@ async function loadConfig() {
           classFetch: {
             defaultDaysAhead: dbSettings.defaultDaysAhead || 7,
             maxClassesPerFetch: dbSettings.maxClassesPerFetch || 5000
-          }
+          },
+          waitlistLimit: dbSettings.waitlistLimit ?? 5
         };
         
         if (config.preferredLocations && config.preferredLocations.length > 0) {
@@ -71,7 +73,8 @@ async function loadConfig() {
           checkIntervalMinutes: config.scheduler.checkIntervalMinutes,
           defaultSignupHoursBefore: config.scheduler.defaultSignupHoursBefore,
           defaultDaysAhead: config.classFetch.defaultDaysAhead,
-          maxClassesPerFetch: config.classFetch.maxClassesPerFetch
+          maxClassesPerFetch: config.classFetch.maxClassesPerFetch,
+          waitlistLimit: config.waitlistLimit ?? 5
         });
         logger.info('Saved default settings to database');
         
@@ -117,18 +120,19 @@ async function updateConfig(newSettings) {
   if (!db) {
     throw new Error('Database not available for updating config');
   }
-  
+
   await db.saveSettings({
     preferredLocations: newSettings.preferredLocations,
     checkIntervalMinutes: newSettings.scheduler.checkIntervalMinutes,
     defaultSignupHoursBefore: newSettings.scheduler.defaultSignupHoursBefore,
     defaultDaysAhead: newSettings.classFetch.defaultDaysAhead,
-    maxClassesPerFetch: newSettings.classFetch.maxClassesPerFetch
+    maxClassesPerFetch: newSettings.classFetch.maxClassesPerFetch,
+    waitlistLimit: newSettings.waitlistLimit ?? 5
   });
-  
+
   await loadConfig();
   logger.info('Configuration updated successfully');
-  
+
   return config;
 }
 

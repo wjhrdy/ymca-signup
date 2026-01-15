@@ -551,6 +551,18 @@ app.post('/api/waitlist/:occurrenceId', requireAuth, async (req, res) => {
       await db.clearSession();
       logger.info('Session cleared from database');
     }
+
+    // Return specific error messages for known error codes
+    if (error.code === 'WAITLIST_FULL') {
+      return res.status(422).json({ error: 'The waitlist for this class is full', code: 'WAITLIST_FULL' });
+    }
+    if (error.code === 'ALREADY_ON_WAITLIST') {
+      return res.status(409).json({ error: 'You are already on the waitlist for this class', code: 'ALREADY_ON_WAITLIST' });
+    }
+    if (error.code === 'WAITLIST_NOT_AVAILABLE') {
+      return res.status(404).json({ error: 'Waitlist is not available for this class', code: 'WAITLIST_NOT_AVAILABLE' });
+    }
+
     res.status(500).json({ error: error.message });
   }
 });
@@ -672,14 +684,15 @@ app.get('/api/settings', requireAuth, async (req, res) => {
 
 app.put('/api/settings', requireAuth, async (req, res) => {
   try {
-    const { preferredLocations, scheduler, classFetch } = req.body;
-    
+    const { preferredLocations, scheduler, classFetch, waitlistLimit } = req.body;
+
     const updatedConfig = await appConfig.updateConfig({
       preferredLocations,
       scheduler,
-      classFetch
+      classFetch,
+      waitlistLimit
     });
-    
+
     res.json({ success: true, config: updatedConfig });
   } catch (error) {
     logger.error('Update settings error:', error);
