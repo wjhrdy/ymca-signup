@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
-import { Calendar, Clock, MapPin, User, Trash2, Settings, RefreshCw, ToggleLeft, ToggleRight, Eye, BookOpen, X, UserX } from 'lucide-react';
+import { Calendar, Clock, MapPin, User, Trash2, Settings, RefreshCw, ToggleLeft, ToggleRight, Eye, BookOpen, X, UserX, ListOrdered } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useConfirm } from './ConfirmDialog';
 
@@ -166,6 +166,52 @@ function TrackedClasses() {
     } catch (error) {
       console.error('Cancel failed:', error);
       toast.error('Cancel failed: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setBookingClass(null);
+    }
+  };
+
+  const bookWaitlist = async (occurrenceId, serviceName) => {
+    const confirmed = await confirm(`Join the waitlist for ${serviceName}?`, {
+      title: 'Join Waitlist',
+      confirmText: 'Join Waitlist'
+    });
+    if (!confirmed) return;
+
+    setBookingClass(occurrenceId);
+    try {
+      await api.post(`/api/waitlist/${occurrenceId}`);
+      toast.success('Successfully joined the waitlist!');
+      const updatedClassItem = classes.find(c => c.id === previewingId);
+      if (updatedClassItem) {
+        await previewMatches(updatedClassItem);
+      }
+    } catch (error) {
+      console.error('Waitlist signup failed:', error);
+      toast.error('Waitlist signup failed: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setBookingClass(null);
+    }
+  };
+
+  const leaveWaitlist = async (occurrenceId, serviceName) => {
+    const confirmed = await confirm(`Leave the waitlist for ${serviceName}?`, {
+      title: 'Leave Waitlist',
+      confirmText: 'Leave Waitlist'
+    });
+    if (!confirmed) return;
+
+    setBookingClass(occurrenceId);
+    try {
+      await api.delete(`/api/waitlist/${occurrenceId}`);
+      toast.success('Successfully left the waitlist!');
+      const updatedClassItem = classes.find(c => c.id === previewingId);
+      if (updatedClassItem) {
+        await previewMatches(updatedClassItem);
+      }
+    } catch (error) {
+      console.error('Leave waitlist failed:', error);
+      toast.error('Leave waitlist failed: ' + (error.response?.data?.error || error.message));
     } finally {
       setBookingClass(null);
     }
@@ -487,9 +533,17 @@ function TrackedClasses() {
                             <span className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs font-medium rounded">
                               ✓ Enrolled
                             </span>
+                          ) : cls.isWaited ? (
+                            <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs font-medium rounded">
+                              On Waitlist {cls.positionOnWaitingList ? `#${cls.positionOnWaitingList}` : ''}
+                            </span>
                           ) : cls.canSignup ? (
                             <span className="px-2 py-0.5 bg-green-100 text-green-800 text-xs font-medium rounded">
                               Available
+                            </span>
+                          ) : cls.canJoinWaitlist ? (
+                            <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs font-medium rounded">
+                              Waitlist Available
                             </span>
                           ) : cls.spotsAvailable === 0 ? (
                             <span className="px-2 py-0.5 bg-red-100 text-red-800 text-xs font-medium rounded">
@@ -520,6 +574,24 @@ function TrackedClasses() {
                               </>
                             )}
                           </button>
+                        ) : cls.isWaited ? (
+                          <button
+                            onClick={() => leaveWaitlist(cls.id, cls.serviceName)}
+                            disabled={bookingClass === cls.id}
+                            className="w-full px-3 py-2 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 disabled:opacity-50 flex items-center justify-center space-x-2"
+                          >
+                            {bookingClass === cls.id ? (
+                              <>
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                <span>Leaving...</span>
+                              </>
+                            ) : (
+                              <>
+                                <ListOrdered className="w-4 h-4" />
+                                <span>Leave Waitlist</span>
+                              </>
+                            )}
+                          </button>
                         ) : cls.canSignup ? (
                           <button
                             onClick={() => bookClass(cls.id, cls.serviceName)}
@@ -535,6 +607,24 @@ function TrackedClasses() {
                               <>
                                 <BookOpen className="w-4 h-4" />
                                 <span>Book Now</span>
+                              </>
+                            )}
+                          </button>
+                        ) : cls.canJoinWaitlist ? (
+                          <button
+                            onClick={() => bookWaitlist(cls.id, cls.serviceName)}
+                            disabled={bookingClass === cls.id}
+                            className="w-full px-3 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 disabled:opacity-50 flex items-center justify-center space-x-2"
+                          >
+                            {bookingClass === cls.id ? (
+                              <>
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                <span>Joining...</span>
+                              </>
+                            ) : (
+                              <>
+                                <ListOrdered className="w-4 h-4" />
+                                <span>Join Waitlist</span>
                               </>
                             )}
                           </button>
