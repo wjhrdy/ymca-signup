@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import api from '../api';
-import { Calendar, Clock, MapPin, User, Plus, RefreshCw, Search, CheckCircle, UserX, ExternalLink } from 'lucide-react';
+import { Calendar, Clock, MapPin, User, Plus, RefreshCw, Search, CheckCircle, UserX, ExternalLink, ListOrdered } from 'lucide-react';
 import Fuse from 'fuse.js';
 import TrackClassModal from './TrackClassModal';
 import toast from 'react-hot-toast';
@@ -173,6 +173,26 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
     } catch (error) {
       console.error('Cancel failed:', error);
       toast.error('Cancel failed: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setCancellingClass(null);
+    }
+  };
+
+  const leaveWaitlist = async (classId, serviceName) => {
+    const confirmed = await confirm(`Leave the waitlist for ${serviceName}?`, {
+      title: 'Leave Waitlist',
+      confirmText: 'Leave Waitlist'
+    });
+    if (!confirmed) return;
+
+    setCancellingClass(classId);
+    try {
+      await classActions.leaveWaitlist(classId);
+      toast.success('Successfully left the waitlist!');
+      fetchClasses();
+    } catch (error) {
+      console.error('Leave waitlist failed:', error);
+      toast.error('Leave waitlist failed: ' + (error.response?.data?.error || error.message));
     } finally {
       setCancellingClass(null);
     }
@@ -391,16 +411,21 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filteredClasses.map((classItem) => (
-            <div key={classItem.id} className={`bg-white rounded-lg shadow hover:shadow-lg transition-shadow p-6 ${classItem.isJoined ? 'border-2 border-green-300' : ''}`}>
+            <div key={classItem.id} className={`bg-white rounded-lg shadow hover:shadow-lg transition-shadow p-6 ${classItem.isJoined ? 'border-2 border-green-300' : classItem.isWaited ? 'border-2 border-yellow-300' : ''}`}>
               <div className="mb-4">
                 <div className="flex items-start justify-between mb-1">
                   <h3 className="text-lg font-semibold text-gray-900">{classItem.serviceName}</h3>
-                  {classItem.isJoined && (
+                  {classItem.isJoined ? (
                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                       <CheckCircle className="w-3 h-3 mr-1" />
                       Enrolled
                     </span>
-                  )}
+                  ) : classItem.isWaited ? (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                      <ListOrdered className="w-3 h-3 mr-1" />
+                      On Waitlist {classItem.positionOnWaitingList ? `#${classItem.positionOnWaitingList}` : ''}
+                    </span>
+                  ) : null}
                 </div>
                 <div className="flex items-center text-sm text-gray-600 space-x-4">
                   {classItem.trainerName && (
@@ -480,6 +505,24 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
                       <>
                         <UserX className="w-4 h-4" />
                         <span>Cancel Enrollment</span>
+                      </>
+                    )}
+                  </button>
+                ) : classItem.isWaited ? (
+                  <button
+                    onClick={() => leaveWaitlist(classItem.id, classItem.serviceName)}
+                    disabled={cancellingClass === classItem.id}
+                    className="flex-1 px-4 py-2 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 disabled:opacity-50 flex items-center justify-center space-x-2"
+                  >
+                    {cancellingClass === classItem.id ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Leaving...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ListOrdered className="w-4 h-4" />
+                        <span>Leave Waitlist</span>
                       </>
                     )}
                   </button>

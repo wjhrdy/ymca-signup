@@ -332,13 +332,18 @@ function SignupLogs() {
                       <button
                         onClick={() => handleLeaveWaitlist(booking.id)}
                         disabled={actionInProgress === booking.id}
-                        className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors disabled:opacity-50"
-                        title="Leave waitlist"
+                        className="px-4 py-2 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 disabled:opacity-50 flex items-center space-x-2"
                       >
                         {actionInProgress === booking.id ? (
-                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Leaving...</span>
+                          </>
                         ) : (
-                          <LogOut className="w-4 h-4" />
+                          <>
+                            <LogOut className="w-4 h-4" />
+                            <span>Leave Waitlist</span>
+                          </>
                         )}
                       </button>
                     )}
@@ -348,26 +353,36 @@ function SignupLogs() {
                           <button
                             onClick={() => handleLateCancelBooking(booking.id)}
                             disabled={actionInProgress === booking.id}
-                            className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors disabled:opacity-50"
-                            title="Late cancel (past cancellation deadline)"
+                            className="px-4 py-2 bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 disabled:opacity-50 flex items-center space-x-2"
                           >
                             {actionInProgress === booking.id ? (
-                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              <>
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                <span>Cancelling...</span>
+                              </>
                             ) : (
-                              <AlertTriangle className="w-4 h-4" />
+                              <>
+                                <AlertTriangle className="w-4 h-4" />
+                                <span>Late Cancel</span>
+                              </>
                             )}
                           </button>
                         ) : (
                           <button
                             onClick={() => handleCancelBooking(booking.id)}
                             disabled={actionInProgress === booking.id}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                            title="Cancel booking"
+                            className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 disabled:opacity-50 flex items-center space-x-2"
                           >
                             {actionInProgress === booking.id ? (
-                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              <>
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                <span>Cancelling...</span>
+                              </>
                             ) : (
-                              <Trash2 className="w-4 h-4" />
+                              <>
+                                <Trash2 className="w-4 h-4" />
+                                <span>Cancel Booking</span>
+                              </>
                             )}
                           </button>
                         )}
