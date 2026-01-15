@@ -563,19 +563,19 @@ async function cancelBooking(sessionCookie, occurrenceId) {
   try {
     logger.info(`Attempting to cancel occurrence ${occurrenceId}...`);
     logger.debug(`Session cookie: ${sessionCookie.substring(0, 50)}...`);
-    
+
     const csrfToken = await getCSRFToken(sessionCookie);
     logger.debug(`CSRF token obtained: ${csrfToken ? csrfToken.substring(0, 20) + '...' : 'NONE'}`);
-    
+
     if (!csrfToken) {
       throw new Error('Failed to obtain CSRF token. Session may be invalid.');
     }
-    
+
     const formData = new URLSearchParams();
     formData.append('json', JSON.stringify({}));
 
     logger.debug(`Making DELETE request to: ${API_BASE_URL}/schedule/occurrences/${occurrenceId}/cancel`);
-    
+
     const response = await axios.delete(
       `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/cancel`,
       {
@@ -599,9 +599,9 @@ async function cancelBooking(sessionCookie, occurrenceId) {
   } catch (error) {
     const errorData = error.response?.data;
     const status = error.response?.status;
-    
+
     let errorMessage = 'Failed to cancel booking';
-    
+
     if (status === 400 && errorData?.exception) {
       errorMessage = `Cannot cancel this class. The YMCA API returned: ${errorData.exception}. This may mean you're not enrolled, the class has started, or the cancellation deadline has passed.`;
     } else if (status === 404) {
@@ -613,7 +613,129 @@ async function cancelBooking(sessionCookie, occurrenceId) {
     } else {
       errorMessage = `Failed to cancel booking: ${error.message}`;
     }
-    
+
+    logger.error(errorMessage);
+    const err = new Error(errorMessage);
+    err.status = status;
+    err.originalError = errorData;
+    throw err;
+  }
+}
+
+async function lateCancelBooking(sessionCookie, occurrenceId) {
+  try {
+    logger.info(`Attempting to late cancel occurrence ${occurrenceId}...`);
+
+    const csrfToken = await getCSRFToken(sessionCookie);
+
+    if (!csrfToken) {
+      throw new Error('Failed to obtain CSRF token. Session may be invalid.');
+    }
+
+    const formData = new URLSearchParams();
+    formData.append('json', JSON.stringify({}));
+
+    logger.debug(`Making DELETE request to: ${API_BASE_URL}/schedule/occurrences/${occurrenceId}/late_cancel`);
+
+    const response = await axios.delete(
+      `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/late_cancel`,
+      {
+        headers: {
+          'Cookie': sessionCookie,
+          'Accept': '*/*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Referer': YMCA_URL + '/',
+          'Origin': YMCA_URL,
+          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
+        },
+        data: formData.toString()
+      }
+    );
+
+    logger.info('✓ Successfully late cancelled booking');
+    return response.data;
+  } catch (error) {
+    const errorData = error.response?.data;
+    const status = error.response?.status;
+
+    let errorMessage = 'Failed to late cancel booking';
+
+    if (status === 400 && errorData?.exception) {
+      errorMessage = `Cannot late cancel this class: ${errorData.exception}`;
+    } else if (status === 404) {
+      errorMessage = 'Class not found or you are not enrolled in this class.';
+    } else if (status === 422) {
+      errorMessage = 'Late cancellation is not available for this class.';
+    } else if (errorData) {
+      errorMessage = `Failed to late cancel booking: ${JSON.stringify(errorData)}`;
+    } else {
+      errorMessage = `Failed to late cancel booking: ${error.message}`;
+    }
+
+    logger.error(errorMessage);
+    const err = new Error(errorMessage);
+    err.status = status;
+    err.originalError = errorData;
+    throw err;
+  }
+}
+
+async function leaveWaitlist(sessionCookie, occurrenceId) {
+  try {
+    logger.info(`Attempting to leave waitlist for occurrence ${occurrenceId}...`);
+
+    const csrfToken = await getCSRFToken(sessionCookie);
+
+    if (!csrfToken) {
+      throw new Error('Failed to obtain CSRF token. Session may be invalid.');
+    }
+
+    const formData = new URLSearchParams();
+    formData.append('json', JSON.stringify({}));
+
+    logger.debug(`Making DELETE request to: ${API_BASE_URL}/schedule/occurrences/${occurrenceId}/leave`);
+
+    const response = await axios.delete(
+      `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/leave`,
+      {
+        headers: {
+          'Cookie': sessionCookie,
+          'Accept': '*/*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Referer': YMCA_URL + '/',
+          'Origin': YMCA_URL,
+          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
+        },
+        data: formData.toString()
+      }
+    );
+
+    logger.info('✓ Successfully left waitlist');
+    return response.data;
+  } catch (error) {
+    const errorData = error.response?.data;
+    const status = error.response?.status;
+
+    let errorMessage = 'Failed to leave waitlist';
+
+    if (status === 400 && errorData?.exception) {
+      errorMessage = `Cannot leave waitlist: ${errorData.exception}`;
+    } else if (status === 404) {
+      errorMessage = 'Class not found or you are not on the waitlist.';
+    } else if (status === 422) {
+      errorMessage = 'Cannot leave waitlist for this class.';
+    } else if (errorData) {
+      errorMessage = `Failed to leave waitlist: ${JSON.stringify(errorData)}`;
+    } else {
+      errorMessage = `Failed to leave waitlist: ${error.message}`;
+    }
+
     logger.error(errorMessage);
     const err = new Error(errorMessage);
     err.status = status;
@@ -932,8 +1054,10 @@ module.exports = {
   getOccurrenceDetails,
   signupForClass,
   joinWaitlist,
+  leaveWaitlist,
   getMyBookings,
   cancelBooking,
+  lateCancelBooking,
   getLocations,
   getServices,
   createClassProfile,

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
-import { Calendar, Clock, MapPin, User, CheckCircle, XCircle, RefreshCw, AlertCircle, Trash2, ListChecks } from 'lucide-react';
+import { Calendar, Clock, MapPin, User, CheckCircle, XCircle, RefreshCw, AlertCircle, Trash2, ListChecks, LogOut, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useConfirm } from './ConfirmDialog';
 
@@ -8,7 +8,7 @@ function SignupLogs() {
   const { confirm } = useConfirm();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [cancellingId, setCancellingId] = useState(null);
+  const [actionInProgress, setActionInProgress] = useState(null);
   const [filter, setFilter] = useState('all');
 
   useEffect(() => {
@@ -41,8 +41,8 @@ function SignupLogs() {
       confirmText: 'Cancel Booking'
     });
     if (!confirmed) return;
-    
-    setCancellingId(occurrenceId);
+
+    setActionInProgress(occurrenceId);
     try {
       await api.delete(`/api/bookings/${occurrenceId}`);
       toast.success('Booking cancelled successfully');
@@ -51,8 +51,66 @@ function SignupLogs() {
       console.error('Failed to cancel booking:', error);
       toast.error('Failed to cancel booking: ' + (error.response?.data?.error || error.message));
     } finally {
-      setCancellingId(null);
+      setActionInProgress(null);
     }
+  };
+
+  const handleLateCancelBooking = async (occurrenceId) => {
+    const confirmed = await confirm(
+      'Late cancellation may incur a fee or penalty. Are you sure you want to late cancel this booking?',
+      {
+        title: 'Late Cancel Booking',
+        confirmText: 'Late Cancel'
+      }
+    );
+    if (!confirmed) return;
+
+    setActionInProgress(occurrenceId);
+    try {
+      await api.delete(`/api/bookings/${occurrenceId}/late-cancel`);
+      toast.success('Booking late cancelled successfully');
+      await fetchBookings();
+    } catch (error) {
+      console.error('Failed to late cancel booking:', error);
+      toast.error('Failed to late cancel: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const handleLeaveWaitlist = async (occurrenceId) => {
+    const confirmed = await confirm('Are you sure you want to leave the waitlist?', {
+      title: 'Leave Waitlist',
+      confirmText: 'Leave Waitlist'
+    });
+    if (!confirmed) return;
+
+    setActionInProgress(occurrenceId);
+    try {
+      await api.delete(`/api/waitlist/${occurrenceId}`);
+      toast.success('Left waitlist successfully');
+      await fetchBookings();
+    } catch (error) {
+      console.error('Failed to leave waitlist:', error);
+      toast.error('Failed to leave waitlist: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  // Determine if late cancel is required based on cancellation deadline
+  const isLateCancelRequired = (booking) => {
+    if (!booking.is_joined) return false;
+
+    const now = new Date();
+    const occursAt = new Date(booking.occurs_at);
+
+    // Use appointment_cancel_time if available, otherwise default to 2 hours
+    const cancelHours = booking.appointment_cancel_time || 2;
+    const cancellationDeadline = new Date(occursAt.getTime() - (cancelHours * 60 * 60 * 1000));
+
+    // If we're past the cancellation deadline but before class starts, late cancel is required
+    return now > cancellationDeadline && now < occursAt;
   };
 
   const formatDate = (dateString) => {
@@ -261,7 +319,7 @@ function SignupLogs() {
                   </div>
                   <div className="flex items-center space-x-2">
                     <span className={`px-3 py-1 text-xs font-medium rounded-full ${
-                      isWaitlisted 
+                      isWaitlisted
                         ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
                         : isActive
                         ? 'bg-green-100 text-green-800 border border-green-200'
@@ -269,19 +327,50 @@ function SignupLogs() {
                     }`}>
                       {isWaitlisted ? 'WAITLIST' : isActive ? 'BOOKED' : 'COMPLETED'}
                     </span>
-                    {!isPast && (booking.is_joined || booking.is_waited) && (
+                    {!isPast && isWaitlisted && (
                       <button
-                        onClick={() => handleCancelBooking(booking.id)}
-                        disabled={cancellingId === booking.id}
-                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                        title="Cancel booking"
+                        onClick={() => handleLeaveWaitlist(booking.id)}
+                        disabled={actionInProgress === booking.id}
+                        className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors disabled:opacity-50"
+                        title="Leave waitlist"
                       >
-                        {cancellingId === booking.id ? (
+                        {actionInProgress === booking.id ? (
                           <RefreshCw className="w-4 h-4 animate-spin" />
                         ) : (
-                          <Trash2 className="w-4 h-4" />
+                          <LogOut className="w-4 h-4" />
                         )}
                       </button>
+                    )}
+                    {!isPast && booking.is_joined && !isWaitlisted && (
+                      <>
+                        {isLateCancelRequired(booking) ? (
+                          <button
+                            onClick={() => handleLateCancelBooking(booking.id)}
+                            disabled={actionInProgress === booking.id}
+                            className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors disabled:opacity-50"
+                            title="Late cancel (past cancellation deadline)"
+                          >
+                            {actionInProgress === booking.id ? (
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <AlertTriangle className="w-4 h-4" />
+                            )}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleCancelBooking(booking.id)}
+                            disabled={actionInProgress === booking.id}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                            title="Cancel booking"
+                          >
+                            {actionInProgress === booking.id ? (
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-4 h-4" />
+                            )}
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

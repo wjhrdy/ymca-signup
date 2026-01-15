@@ -566,12 +566,56 @@ app.delete('/api/bookings/:occurrenceId', requireAuth, async (req, res) => {
       await db.saveSession(sessionCookie);
       logger.info('Session saved to database');
     }
-    
+
     const { occurrenceId } = req.params;
     const result = await classService.cancelBooking(sessionCookie, occurrenceId);
     res.json({ success: true, result });
   } catch (error) {
     logger.error('Cancel booking error:', error);
+    if (error.message.includes('401') || error.response?.status === 401) {
+      sessionCookie = null;
+      await db.clearSession();
+      logger.info('Session cleared from database');
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/bookings/:occurrenceId/late-cancel', requireAuth, async (req, res) => {
+  try {
+    if (!sessionCookie) {
+      sessionCookie = await authService.login();
+      await db.saveSession(sessionCookie);
+      logger.info('Session saved to database');
+    }
+
+    const { occurrenceId } = req.params;
+    const result = await classService.lateCancelBooking(sessionCookie, occurrenceId);
+    res.json({ success: true, result });
+  } catch (error) {
+    logger.error('Late cancel booking error:', error);
+    if (error.message.includes('401') || error.response?.status === 401) {
+      sessionCookie = null;
+      await db.clearSession();
+      logger.info('Session cleared from database');
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/waitlist/:occurrenceId', requireAuth, async (req, res) => {
+  try {
+    if (!sessionCookie) {
+      sessionCookie = await authService.login();
+      await db.saveSession(sessionCookie);
+      logger.info('Session saved to database');
+    }
+
+    const { occurrenceId } = req.params;
+    const result = await classService.leaveWaitlist(sessionCookie, occurrenceId);
+    res.json({ success: true, result });
+  } catch (error) {
+    logger.error('Leave waitlist error:', error);
     if (error.message.includes('401') || error.response?.status === 401) {
       sessionCookie = null;
       await db.clearSession();
