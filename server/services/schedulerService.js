@@ -7,6 +7,41 @@ let lastFetchTime = null;
 const CACHE_DURATION_MS = 10 * 60 * 1000;
 
 /**
+ * Fetch fresh lock_version for a specific class right before signup.
+ * Uses a narrow time window to minimize API payload while getting current data.
+ */
+async function getFreshLockVersion(sessionCookie, classToSignup) {
+  try {
+    const classTime = new Date(classToSignup.startTime);
+    // Fetch a 1-hour window around the class time
+    const startDate = new Date(classTime.getTime() - 30 * 60 * 1000);
+    const endDate = new Date(classTime.getTime() + 30 * 60 * 1000);
+
+    logger.debug(`  🔄 Fetching fresh lock_version for ${classToSignup.serviceName}...`);
+
+    const freshClasses = await classService.fetchClasses(sessionCookie, {
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      serviceIds: [classToSignup.serviceId],
+      verifyBookings: false
+    });
+
+    // Find the exact occurrence
+    const freshClass = freshClasses.find(c => c.id === classToSignup.id);
+    if (freshClass && freshClass.lock_version !== undefined) {
+      logger.debug(`  ✓ Got fresh lock_version: ${freshClass.lock_version} (was: ${classToSignup.lock_version})`);
+      return freshClass.lock_version;
+    }
+
+    logger.debug(`  ⚠️ Could not find fresh lock_version, using cached: ${classToSignup.lock_version}`);
+    return classToSignup.lock_version;
+  } catch (error) {
+    logger.warn(`  ⚠️ Error fetching fresh lock_version: ${error.message}, using cached: ${classToSignup.lock_version}`);
+    return classToSignup.lock_version;
+  }
+}
+
+/**
  * Check for classes that need signup and attempt to book them.
  * This function implements a retry mechanism: any class within its booking window
  * will be retried on every scheduler run (every 5 minutes) until either:
@@ -284,16 +319,15 @@ async function checkAndSignup(sessionCookie) {
         }
 
         logger.info(`  ✅ ATTEMPTING TO BOOK: ${classToSignup.serviceName} at ${classTime}`);
-        
-        // Use the lock_version from the class data that was already fetched
-        // The /schedule/occurrences/{id} endpoint returns 404, so we can't re-fetch
-        logger.debug(`  🔄 Using lock_version ${classToSignup.lock_version} from class data`);
-        
+
+        // Fetch fresh lock_version right before signup to minimize race conditions
+        const freshLockVersion = await getFreshLockVersion(sessionCookie, classToSignup);
+
         try {
           const result = await classService.signupForClass(
             sessionCookie,
             classToSignup.id,
-            classToSignup.lock_version, // Use lock_version from already-fetched class data
+            freshLockVersion,
             true, // tryWaitlist
             classToSignup.waitingListEnabled
           );
