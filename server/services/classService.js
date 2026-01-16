@@ -438,20 +438,18 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
     }
     
     const payload = (lockVersion !== null && lockVersion !== undefined) ? { lock_version: lockVersion } : {};
-    const formData = new URLSearchParams();
-    formData.append('json', JSON.stringify(payload));
 
     logger.info(`Attempting to join occurrence ${occurrenceId} with payload:`, payload);
-    
+
     const response = await axios.post(
       `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/join`,
-      formData.toString(),
+      payload,
       {
         headers: {
           'Cookie': sessionCookie,
-          'Accept': '*/*',
+          'Accept': 'application/json, text/javascript, */*; q=0.01',
           'Accept-Language': 'en-US,en;q=0.9',
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'Content-Type': 'application/json; charset=UTF-8',
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           'X-Requested-With': 'XMLHttpRequest',
           'Origin': YMCA_URL,
@@ -485,7 +483,7 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
       if (tryWaitlist && waitingListEnabled) {
         logger.info('Class full, trying waitlist...');
         try {
-          return await joinWaitlist(sessionCookie, occurrenceId);
+          return await joinWaitlist(sessionCookie, occurrenceId, lockVersion);
         } catch (waitlistError) {
           // If waitlist fails with 404, might mean already enrolled or waitlist disabled
           if (waitlistError.response?.status === 404) {
@@ -507,16 +505,19 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
   }
 }
 
-async function joinWaitlist(sessionCookie, occurrenceId) {
+async function joinWaitlist(sessionCookie, occurrenceId, lockVersion = null) {
   try {
     const csrfToken = await getCSRFToken(sessionCookie);
     
     if (!csrfToken) {
       logger.warn('No CSRF token available, attempting without it...');
     }
-    
+
+    const payload = (lockVersion !== null && lockVersion !== undefined) ? { lock_version: lockVersion } : {};
     const formData = new URLSearchParams();
-    formData.append('json', JSON.stringify({}));
+    formData.append('json', JSON.stringify(payload));
+
+    logger.info(`Attempting to join waitlist for occurrence ${occurrenceId} with payload:`, payload);
 
     // YMCA uses PUT for waitlist, not POST
     const response = await axios.put(
