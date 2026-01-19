@@ -425,46 +425,50 @@ function TrackedClasses() {
                     </div>
                   )}
 
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => previewMatches(classItem)}
-                      className="flex-1 px-4 py-2 bg-blue-100 text-blue-800 rounded-lg hover:bg-blue-200 flex items-center justify-center space-x-2"
-                    >
-                      <Eye className="w-4 h-4" />
-                      <span>Preview</span>
-                    </button>
-                    <button
-                      onClick={() => toggleAutoSignup(classItem)}
-                      className={`flex-1 px-4 py-2 rounded-lg flex items-center justify-center space-x-2 ${
-                        classItem.auto_signup === 1
-                          ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
-                          : 'bg-green-100 text-green-800 hover:bg-green-200'
-                      }`}
-                    >
-                      {classItem.auto_signup === 1 ? (
-                        <>
-                          <ToggleLeft className="w-4 h-4" />
-                          <span>Disable Auto</span>
-                        </>
-                      ) : (
-                        <>
-                          <ToggleRight className="w-4 h-4" />
-                          <span>Enable Auto</span>
-                        </>
-                      )}
-                    </button>
-                    <button
-                      onClick={() => startEdit(classItem)}
-                      className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center justify-center"
-                    >
-                      <Settings className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => deleteClass(classItem.id)}
-                      className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 flex items-center justify-center"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                  <div className="space-y-2 sm:space-y-0 sm:flex sm:items-center sm:space-x-2">
+                    <div className="flex w-full gap-2 sm:w-auto sm:flex-1">
+                      <button
+                        onClick={() => previewMatches(classItem)}
+                        className="flex-1 px-4 py-2 bg-blue-100 text-blue-800 rounded-lg hover:bg-blue-200 flex items-center justify-center space-x-2"
+                      >
+                        <Eye className="w-4 h-4" />
+                        <span>Preview</span>
+                      </button>
+                      <button
+                        onClick={() => toggleAutoSignup(classItem)}
+                        className={`flex-1 px-4 py-2 rounded-lg flex items-center justify-center space-x-2 ${
+                          classItem.auto_signup === 1
+                            ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
+                            : 'bg-green-100 text-green-800 hover:bg-green-200'
+                        }`}
+                      >
+                        {classItem.auto_signup === 1 ? (
+                          <>
+                            <ToggleLeft className="w-4 h-4" />
+                            <span>Disable Auto</span>
+                          </>
+                        ) : (
+                          <>
+                            <ToggleRight className="w-4 h-4" />
+                            <span>Enable Auto</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <div className="flex w-full gap-2 sm:w-auto">
+                      <button
+                        onClick={() => startEdit(classItem)}
+                        className="flex-1 sm:flex-none px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center justify-center"
+                      >
+                        <Settings className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => deleteClass(classItem.id)}
+                        className="flex-1 sm:flex-none px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 flex items-center justify-center"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 </>
               )}

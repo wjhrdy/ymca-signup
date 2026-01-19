@@ -204,10 +204,10 @@ function App() {
       <div className="max-w-7xl mx-auto px-4 py-6">
         <div className="mb-6">
           <div className="border-b border-gray-200">
-            <nav className="flex space-x-8">
+            <nav className="flex flex-wrap gap-x-6 gap-y-2">
               <button
                 onClick={() => setActiveTab('browse')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                className={`py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm ${
                   activeTab === 'browse'
                     ? 'border-primary text-primary'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -217,7 +217,7 @@ function App() {
               </button>
               <button
                 onClick={() => setActiveTab('tracked')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                className={`py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm ${
                   activeTab === 'tracked'
                     ? 'border-primary text-primary'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -227,7 +227,7 @@ function App() {
               </button>
               <button
                 onClick={() => setActiveTab('logs')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                className={`py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm ${
                   activeTab === 'logs'
                     ? 'border-primary text-primary'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -237,7 +237,7 @@ function App() {
               </button>
               <button
                 onClick={() => setActiveTab('settings')}
-                className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+                className={`py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm flex items-center space-x-2 ${
                   activeTab === 'settings'
                     ? 'border-primary text-primary'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
