@@ -1,6 +1,6 @@
 # YMCA Auto-Signup
 
-![YMCA favicon](client/public/web-app-manifest-512x512.png)
+![YMCA logo](ymca-logo.png)
 
 Automatically signs you up for YMCA classes at the right time. You track the classes you want, and the app handles registration when spots open up.
 
