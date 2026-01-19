@@ -360,7 +360,10 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
             <input
-              type="text"
+              type="search"
+              inputMode="search"
+              enterKeyHint="search"
+              role="searchbox"
               value={searchQuery}
               onChange={(e) => {
                 const query = e.target.value;
@@ -371,6 +374,18 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
                   fetchClasses(true);
                 }
                 // When user clears search, reset to normal mode on next refresh
+                if (!query.trim() && isSearchMode) {
+                  setIsSearchMode(false);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                const query = e.currentTarget.value;
+                setSearchQuery(query);
+
+                if (query.trim() && !isSearchMode) {
+                  fetchClasses(true);
+                }
                 if (!query.trim() && isSearchMode) {
                   setIsSearchMode(false);
                 }
