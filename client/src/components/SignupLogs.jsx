@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import * as classActions from '../services/classActions';
-import { Calendar, Clock, MapPin, User, CheckCircle, XCircle, RefreshCw, AlertCircle, Trash2, ListChecks, LogOut, AlertTriangle } from 'lucide-react';
+import { Calendar, Clock, MapPin, User, CheckCircle, XCircle, RefreshCw, AlertCircle, Trash2, ListChecks, LogOut } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useConfirm } from './ConfirmDialog';
 
@@ -56,29 +56,6 @@ function SignupLogs() {
     }
   };
 
-  const handleLateCancelBooking = async (occurrenceId) => {
-    const confirmed = await confirm(
-      'Late cancellation may incur a fee or penalty. Are you sure you want to late cancel this booking?',
-      {
-        title: 'Late Cancel Booking',
-        confirmText: 'Late Cancel'
-      }
-    );
-    if (!confirmed) return;
-
-    setActionInProgress(occurrenceId);
-    try {
-      await classActions.lateCancelBooking(occurrenceId);
-      toast.success('Booking late cancelled successfully');
-      await fetchBookings();
-    } catch (error) {
-      console.error('Failed to late cancel booking:', error);
-      toast.error('Failed to late cancel: ' + (error.response?.data?.error || error.message));
-    } finally {
-      setActionInProgress(null);
-    }
-  };
-
   const handleLeaveWaitlist = async (occurrenceId) => {
     const confirmed = await confirm('Are you sure you want to leave the waitlist?', {
       title: 'Leave Waitlist',
@@ -97,21 +74,6 @@ function SignupLogs() {
     } finally {
       setActionInProgress(null);
     }
-  };
-
-  // Determine if late cancel is required based on cancellation deadline
-  const isLateCancelRequired = (booking) => {
-    if (!booking.is_joined) return false;
-
-    const now = new Date();
-    const occursAt = new Date(booking.occurs_at);
-
-    // Use appointment_cancel_time if available, otherwise default to 2 hours
-    const cancelHours = booking.appointment_cancel_time || 2;
-    const cancellationDeadline = new Date(occursAt.getTime() - (cancelHours * 60 * 60 * 1000));
-
-    // If we're past the cancellation deadline but before class starts, late cancel is required
-    return now > cancellationDeadline && now < occursAt;
   };
 
   const formatDate = (dateString) => {
@@ -348,45 +310,23 @@ function SignupLogs() {
                       </button>
                     )}
                     {!isPast && booking.is_joined && !isWaitlisted && (
-                      <>
-                        {isLateCancelRequired(booking) ? (
-                          <button
-                            onClick={() => handleLateCancelBooking(booking.id)}
-                            disabled={actionInProgress === booking.id}
-                            className="px-4 py-2 bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 disabled:opacity-50 flex items-center space-x-2"
-                          >
-                            {actionInProgress === booking.id ? (
-                              <>
-                                <RefreshCw className="w-4 h-4 animate-spin" />
-                                <span>Cancelling...</span>
-                              </>
-                            ) : (
-                              <>
-                                <AlertTriangle className="w-4 h-4" />
-                                <span>Late Cancel</span>
-                              </>
-                            )}
-                          </button>
+                      <button
+                        onClick={() => handleCancelBooking(booking.id)}
+                        disabled={actionInProgress === booking.id}
+                        className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 disabled:opacity-50 flex items-center space-x-2"
+                      >
+                        {actionInProgress === booking.id ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Cancelling...</span>
+                          </>
                         ) : (
-                          <button
-                            onClick={() => handleCancelBooking(booking.id)}
-                            disabled={actionInProgress === booking.id}
-                            className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 disabled:opacity-50 flex items-center space-x-2"
-                          >
-                            {actionInProgress === booking.id ? (
-                              <>
-                                <RefreshCw className="w-4 h-4 animate-spin" />
-                                <span>Cancelling...</span>
-                              </>
-                            ) : (
-                              <>
-                                <Trash2 className="w-4 h-4" />
-                                <span>Cancel Booking</span>
-                              </>
-                            )}
-                          </button>
+                          <>
+                            <Trash2 className="w-4 h-4" />
+                            <span>Cancel Booking</span>
+                          </>
                         )}
-                      </>
+                      </button>
                     )}
                   </div>
                 </div>

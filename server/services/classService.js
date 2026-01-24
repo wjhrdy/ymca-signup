@@ -676,67 +676,6 @@ async function cancelBooking(sessionCookie, occurrenceId) {
   }
 }
 
-async function lateCancelBooking(sessionCookie, occurrenceId) {
-  try {
-    logger.info(`Attempting to late cancel occurrence ${occurrenceId}...`);
-
-    const csrfToken = await getCSRFToken(sessionCookie);
-
-    if (!csrfToken) {
-      throw new Error('Failed to obtain CSRF token. Session may be invalid.');
-    }
-
-    const formData = new URLSearchParams();
-    formData.append('json', JSON.stringify({}));
-
-    logger.debug(`Making DELETE request to: ${API_BASE_URL}/schedule/occurrences/${occurrenceId}/late_cancel`);
-
-    const response = await axios.delete(
-      `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/late_cancel`,
-      {
-        headers: {
-          'Cookie': sessionCookie,
-          'Accept': '*/*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Referer': YMCA_URL + '/',
-          'Origin': YMCA_URL,
-          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
-        },
-        data: formData.toString()
-      }
-    );
-
-    logger.info('✓ Successfully late cancelled booking');
-    return response.data;
-  } catch (error) {
-    const errorData = error.response?.data;
-    const status = error.response?.status;
-
-    let errorMessage = 'Failed to late cancel booking';
-
-    if (status === 400 && errorData?.exception) {
-      errorMessage = `Cannot late cancel this class: ${errorData.exception}`;
-    } else if (status === 404) {
-      errorMessage = 'Class not found or you are not enrolled in this class.';
-    } else if (status === 422) {
-      errorMessage = 'Late cancellation is not available for this class.';
-    } else if (errorData) {
-      errorMessage = `Failed to late cancel booking: ${JSON.stringify(errorData)}`;
-    } else {
-      errorMessage = `Failed to late cancel booking: ${error.message}`;
-    }
-
-    logger.error(errorMessage);
-    const err = new Error(errorMessage);
-    err.status = status;
-    err.originalError = errorData;
-    throw err;
-  }
-}
-
 async function leaveWaitlist(sessionCookie, occurrenceId) {
   try {
     logger.info(`Attempting to leave waitlist for occurrence ${occurrenceId}...`);
@@ -1111,7 +1050,6 @@ module.exports = {
   leaveWaitlist,
   getMyBookings,
   cancelBooking,
-  lateCancelBooking,
   getLocations,
   getServices,
   createClassProfile,

@@ -37,16 +37,6 @@ export async function cancelBooking(occurrenceId) {
 }
 
 /**
- * Late cancel a class booking (after cancellation deadline)
- * @param {number|string} occurrenceId - The class occurrence ID
- * @returns {Promise<Object>} API response data
- */
-export async function lateCancelBooking(occurrenceId) {
-  const response = await api.delete(`/api/bookings/${occurrenceId}/late-cancel`);
-  return response.data;
-}
-
-/**
  * Leave the waitlist for a class
  * @param {number|string} occurrenceId - The class occurrence ID
  * @returns {Promise<Object>} API response data
@@ -60,6 +50,5 @@ export default {
   signupForClass,
   joinWaitlist,
   cancelBooking,
-  lateCancelBooking,
   leaveWaitlist,
 };

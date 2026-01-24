@@ -631,41 +631,6 @@ app.delete('/api/bookings/:occurrenceId', requireAuth, async (req, res) => {
   }
 });
 
-app.delete('/api/bookings/:occurrenceId/late-cancel', requireAuth, async (req, res) => {
-  try {
-    if (!sessionCookie) {
-      sessionCookie = await authService.login();
-      await db.saveSession(sessionCookie);
-      logger.info('Session saved to database');
-    }
-
-    const { occurrenceId } = req.params;
-    const result = await classService.lateCancelBooking(sessionCookie, occurrenceId);
-
-    // Log the cancellation so the scheduler knows not to re-book this class
-    await db.addSignupLog({
-      occurrenceId: occurrenceId,
-      serviceName: 'Late cancelled booking',
-      trainerName: null,
-      locationName: null,
-      classTime: null,
-      status: 'cancelled',
-      errorMessage: 'User late cancelled booking'
-    });
-    logger.info(`Logged late cancellation for occurrence ${occurrenceId} to prevent re-booking`);
-
-    res.json({ success: true, result });
-  } catch (error) {
-    logger.error('Late cancel booking error:', error);
-    if (error.message.includes('401') || error.response?.status === 401) {
-      sessionCookie = null;
-      await db.clearSession();
-      logger.info('Session cleared from database');
-    }
-    res.status(500).json({ error: error.message });
-  }
-});
-
 app.delete('/api/waitlist/:occurrenceId', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {

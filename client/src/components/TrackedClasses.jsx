@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import * as classActions from '../services/classActions';
-import { Calendar, Clock, MapPin, User, Trash2, Settings, RefreshCw, ToggleLeft, ToggleRight, Eye, BookOpen, X, UserX, ListOrdered, AlertTriangle } from 'lucide-react';
+import { Calendar, Clock, MapPin, User, Trash2, Settings, RefreshCw, ToggleLeft, ToggleRight, Eye, BookOpen, X, UserX, ListOrdered } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useConfirm } from './ConfirmDialog';
 
@@ -207,47 +207,6 @@ function TrackedClasses() {
     } catch (error) {
       console.error('Leave waitlist failed:', error);
       toast.error('Leave waitlist failed: ' + (error.response?.data?.error || error.message));
-    } finally {
-      setBookingClass(null);
-    }
-  };
-
-  // Determine if late cancel is required based on cancellation deadline
-  const isLateCancelRequired = (cls) => {
-    if (!cls.isJoined) return false;
-
-    const now = new Date();
-    const classStartTime = new Date(cls.startTime);
-
-    // Use appointmentCancelTime if available, otherwise default to 2 hours
-    const cancelHours = cls.appointmentCancelTime || 2;
-    const cancellationDeadline = new Date(classStartTime.getTime() - (cancelHours * 60 * 60 * 1000));
-
-    // If we're past the cancellation deadline but before class starts, late cancel is required
-    return now > cancellationDeadline && now < classStartTime;
-  };
-
-  const lateCancelClass = async (occurrenceId, serviceName) => {
-    const confirmed = await confirm(
-      `Late cancellation may incur a fee or penalty. Are you sure you want to late cancel ${serviceName}?`,
-      {
-        title: 'Late Cancel',
-        confirmText: 'Late Cancel'
-      }
-    );
-    if (!confirmed) return;
-
-    setBookingClass(occurrenceId);
-    try {
-      await classActions.lateCancelBooking(occurrenceId);
-      toast.success('Successfully late cancelled class!');
-      const updatedClassItem = classes.find(c => c.id === previewingId);
-      if (updatedClassItem) {
-        await previewMatches(updatedClassItem);
-      }
-    } catch (error) {
-      console.error('Late cancel failed:', error);
-      toast.error('Late cancel failed: ' + (error.response?.data?.error || error.message));
     } finally {
       setBookingClass(null);
     }
@@ -597,43 +556,23 @@ function TrackedClasses() {
                         </div>
 
                         {cls.isJoined ? (
-                          isLateCancelRequired(cls) ? (
-                            <button
-                              onClick={() => lateCancelClass(cls.id, cls.serviceName)}
-                              disabled={bookingClass === cls.id}
-                              className="w-full px-3 py-2 bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 disabled:opacity-50 flex items-center justify-center space-x-2"
-                            >
-                              {bookingClass === cls.id ? (
-                                <>
-                                  <RefreshCw className="w-4 h-4 animate-spin" />
-                                  <span>Cancelling...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <AlertTriangle className="w-4 h-4" />
-                                  <span>Late Cancel</span>
-                                </>
-                              )}
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => cancelClass(cls.id, cls.serviceName)}
-                              disabled={bookingClass === cls.id}
-                              className="w-full px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 disabled:opacity-50 flex items-center justify-center space-x-2"
-                            >
-                              {bookingClass === cls.id ? (
-                                <>
-                                  <RefreshCw className="w-4 h-4 animate-spin" />
-                                  <span>Cancelling...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <UserX className="w-4 h-4" />
-                                  <span>Cancel Enrollment</span>
-                                </>
-                              )}
-                            </button>
-                          )
+                          <button
+                            onClick={() => cancelClass(cls.id, cls.serviceName)}
+                            disabled={bookingClass === cls.id}
+                            className="w-full px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 disabled:opacity-50 flex items-center justify-center space-x-2"
+                          >
+                            {bookingClass === cls.id ? (
+                              <>
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                <span>Cancelling...</span>
+                              </>
+                            ) : (
+                              <>
+                                <UserX className="w-4 h-4" />
+                                <span>Cancel Enrollment</span>
+                              </>
+                            )}
+                          </button>
                         ) : cls.isWaited ? (
                           <button
                             onClick={() => leaveWaitlist(cls.id, cls.serviceName)}
