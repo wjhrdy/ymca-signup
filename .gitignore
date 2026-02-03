@@ -149,3 +149,5 @@ client/build/
 database.db
 .DS_Store
 config.yaml
+data/
+opencode.json

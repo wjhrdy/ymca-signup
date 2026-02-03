@@ -9,7 +9,9 @@
     "client": "cd client && npm run dev",
     "build": "cd client && npm run build",
     "start": "node server/index.js",
-    "install-all": "npm install && cd client && npm install"
+    "install-all": "npm install && cd client && npm install",
+    "capture-network": "node scripts/capture-network.js",
+    "parse-network": "node scripts/parse-network.js"
   },
   "keywords": [
     "ymca",
@@ -29,6 +31,7 @@
     "fuse.js": "^7.1.0",
     "js-yaml": "^4.1.1",
     "node-cron": "^3.0.3",
+    "puppeteer": "^21.11.0",
     "react-hot-toast": "^2.6.0",
     "sqlite3": "^5.1.6"
   },

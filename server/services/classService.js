@@ -8,6 +8,7 @@ const YMCA_URL = process.env.YMCA_URL || 'https://ymca-triangle.fisikal.com';
 
 let cachedClientId = null;
 let cachedCsrfToken = null;
+const WEB_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 async function getCSRFToken(sessionCookie) {
   if (cachedCsrfToken) {
@@ -18,7 +19,7 @@ async function getCSRFToken(sessionCookie) {
     const response = await axios.get(YMCA_URL, {
       headers: {
         'Cookie': sessionCookie,
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        'User-Agent': WEB_USER_AGENT
       }
     });
     
@@ -32,6 +33,18 @@ async function getCSRFToken(sessionCookie) {
     logger.warn('Could not fetch CSRF token:', error.message);
     return null;
   }
+}
+
+function buildApiHeaders(sessionCookie, csrfToken, extraHeaders = {}) {
+  return {
+    'Cookie': sessionCookie,
+    'Accept': '*/*',
+    'User-Agent': WEB_USER_AGENT,
+    'X-Requested-With': 'XMLHttpRequest',
+    'Referer': `${YMCA_URL}/`,
+    ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+    ...extraHeaders
+  };
 }
 
 async function getUserClientId(sessionCookie) {
@@ -257,13 +270,8 @@ async function fetchClasses(sessionCookie, filters = {}) {
 
     const jsonParam = encodeURIComponent(JSON.stringify(filterObj));
     const url = `${API_BASE_URL}/schedule/occurrences?all_service_categories=true&json=${jsonParam}`;
-    const headers = {
-      'Cookie': sessionCookie,
-      'Accept': '*/*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'X-Requested-With': 'XMLHttpRequest'
-    };
+    const csrfToken = await getCSRFToken(sessionCookie);
+    const headers = buildApiHeaders(sessionCookie, csrfToken);
     
     logger.debug('Fetching classes...');
     logger.debug('URL:', url);
@@ -396,13 +404,7 @@ async function getOccurrenceDetails(sessionCookie, occurrenceId) {
     const response = await axios.get(
       `${API_BASE_URL}/schedule/occurrences/${occurrenceId}`,
       {
-        headers: {
-          'Cookie': sessionCookie,
-          'Accept': '*/*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'X-Requested-With': 'XMLHttpRequest'
-        }
+        headers: buildApiHeaders(sessionCookie, await getCSRFToken(sessionCookie))
       }
     );
     return response.data;
@@ -438,24 +440,18 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
     }
     
     const payload = (lockVersion !== null && lockVersion !== undefined) ? { lock_version: lockVersion } : {};
+    const formData = new URLSearchParams();
+    formData.append('json', JSON.stringify(payload));
 
     logger.info(`Attempting to join occurrence ${occurrenceId} with payload:`, payload);
 
     const response = await axios.post(
       `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/join`,
-      payload,
+      formData.toString(),
       {
-        headers: {
-          'Cookie': sessionCookie,
-          'Accept': 'application/json, text/javascript, */*; q=0.01',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Content-Type': 'application/json; charset=UTF-8',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Origin': YMCA_URL,
-          'Referer': YMCA_URL + '/',
-          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
-        }
+        headers: buildApiHeaders(sessionCookie, csrfToken, {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+        })
       }
     );
 
@@ -506,37 +502,36 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
 }
 
 async function joinWaitlist(sessionCookie, occurrenceId, lockVersion = null) {
+  let csrfToken = null;
+  let baseHeaders = null;
   try {
-    const csrfToken = await getCSRFToken(sessionCookie);
+    csrfToken = await getCSRFToken(sessionCookie);
     
     if (!csrfToken) {
       logger.warn('No CSRF token available, attempting without it...');
     }
 
-    const payload = (lockVersion !== null && lockVersion !== undefined) ? { lock_version: lockVersion } : {};
-    const formData = new URLSearchParams();
-    formData.append('json', JSON.stringify(payload));
+    baseHeaders = buildApiHeaders(sessionCookie, csrfToken, {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+    });
 
-    logger.info(`Attempting to join waitlist for occurrence ${occurrenceId} with payload:`, payload);
+    const sendWaitlistRequest = async (payload) => {
+      const formData = new URLSearchParams();
+      formData.append('json', JSON.stringify(payload));
+
+      logger.info(`Attempting to join waitlist for occurrence ${occurrenceId} with payload:`, payload);
+
+      return axios.put(
+        `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/wait`,
+        formData.toString(),
+        { headers: baseHeaders }
+      );
+    };
+
+    const initialPayload = {};
 
     // YMCA uses PUT for waitlist, not POST
-    const response = await axios.put(
-      `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/wait`,
-      formData.toString(),
-      {
-        headers: {
-          'Cookie': sessionCookie,
-          'Accept': '*/*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Origin': YMCA_URL,
-          'Referer': YMCA_URL + '/',
-          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
-        }
-      }
-    );
+    const response = await sendWaitlistRequest(initialPayload);
 
     logger.info('✓ Successfully joined waitlist');
     return { ...response.data, waitlisted: true };
@@ -551,6 +546,24 @@ async function joinWaitlist(sessionCookie, occurrenceId, lockVersion = null) {
       notAvailableError.code = 'WAITLIST_NOT_AVAILABLE';
       throw notAvailableError;
     } else if (status === 422) {
+      if (lockVersion !== null && lockVersion !== undefined) {
+        logger.warn('⚠️  Waitlist request rejected with lock_version, retrying without lock_version');
+        try {
+          const retryHeaders = baseHeaders || buildApiHeaders(sessionCookie, csrfToken, {
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+          });
+
+          const retryResponse = await axios.put(
+            `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/wait`,
+            'json=%7B%7D',
+            { headers: retryHeaders }
+          );
+          logger.info('✓ Successfully joined waitlist (retry without lock_version)');
+          return { ...retryResponse.data, waitlisted: true };
+        } catch (retryError) {
+          logger.warn('Retry without lock_version failed:', retryError.response?.data || retryError.message);
+        }
+      }
       if (errorMessage && errorMessage.toLowerCase().includes('full')) {
         logger.warn('⚠️  Waitlist is full - will retry');
         const fullError = new Error('Waitlist is full');
@@ -597,13 +610,7 @@ async function getMyBookings(sessionCookie, filters = {}) {
     const url = `${API_BASE_URL}/schedule/occurrences/bookings?json=${jsonParam}`;
     
     const response = await axios.get(url, {
-      headers: {
-        'Cookie': sessionCookie,
-        'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'X-Requested-With': 'XMLHttpRequest'
-      }
+      headers: buildApiHeaders(sessionCookie, await getCSRFToken(sessionCookie))
     });
 
     return response.data;
@@ -633,17 +640,9 @@ async function cancelBooking(sessionCookie, occurrenceId) {
     const response = await axios.delete(
       `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/cancel`,
       {
-        headers: {
-          'Cookie': sessionCookie,
-          'Accept': '*/*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Referer': YMCA_URL + '/',
-          'Origin': YMCA_URL,
-          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
-        },
+        headers: buildApiHeaders(sessionCookie, csrfToken, {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+        }),
         data: formData.toString()
       }
     );
@@ -694,17 +693,9 @@ async function leaveWaitlist(sessionCookie, occurrenceId) {
     const response = await axios.delete(
       `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/leave`,
       {
-        headers: {
-          'Cookie': sessionCookie,
-          'Accept': '*/*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Referer': YMCA_URL + '/',
-          'Origin': YMCA_URL,
-          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
-        },
+        headers: buildApiHeaders(sessionCookie, csrfToken, {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+        }),
         data: formData.toString()
       }
     );
