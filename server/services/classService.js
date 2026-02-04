@@ -42,6 +42,7 @@ function buildApiHeaders(sessionCookie, csrfToken, extraHeaders = {}) {
     'User-Agent': WEB_USER_AGENT,
     'X-Requested-With': 'XMLHttpRequest',
     'Referer': `${YMCA_URL}/`,
+    'Origin': YMCA_URL,
     ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
     ...extraHeaders
   };
