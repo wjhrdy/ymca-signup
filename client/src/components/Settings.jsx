@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
-import { Save, RefreshCw, AlertCircle, Eye, EyeOff, Key } from 'lucide-react';
+import { Save, RefreshCw, AlertCircle, Eye, EyeOff, Key, Calendar, Copy, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const LOCATIONS = [
@@ -36,6 +36,7 @@ function Settings() {
   const [error, setError] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [hasCredentialChanges, setHasCredentialChanges] = useState(false);
+  const [calendarToken, setCalendarToken] = useState(null);
 
   useEffect(() => {
     loadSettings();
@@ -45,12 +46,14 @@ function Settings() {
     try {
       setLoading(true);
       setError(null);
-      const [settingsResponse, credentialsResponse] = await Promise.all([
+      const [settingsResponse, credentialsResponse, calendarResponse] = await Promise.all([
         api.get('/api/settings'),
-        api.get('/api/credentials/status')
+        api.get('/api/credentials/status'),
+        api.get('/api/calendar-token')
       ]);
       setSettings(settingsResponse.data);
       setCredentialsStatus(credentialsResponse.data);
+      setCalendarToken(calendarResponse.data.token);
       setHasChanges(false);
       setHasCredentialChanges(false);
     } catch (err) {
@@ -241,6 +244,72 @@ function Settings() {
               )}
             </button>
           </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div className="p-6 border-b border-gray-200">
+          <div className="flex items-center space-x-2">
+            <Calendar className="w-5 h-5 text-gray-700" />
+            <h3 className="text-lg font-semibold text-gray-900">Calendar Subscription</h3>
+          </div>
+          <p className="text-sm text-gray-500 mt-1">
+            Subscribe to your booked classes in any calendar app
+          </p>
+        </div>
+        <div className="p-6 space-y-4">
+          {calendarToken && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Subscription URL
+                </label>
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={`${window.location.origin}/cal/${calendarToken}.ics`}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm text-gray-700 font-mono"
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/cal/${calendarToken}.ics`);
+                      toast.success('URL copied to clipboard');
+                    }}
+                    className="px-3 py-2 bg-primary text-white rounded-lg hover:bg-blue-700 flex items-center space-x-1"
+                  >
+                    <Copy className="w-4 h-4" />
+                    <span>Copy</span>
+                  </button>
+                </div>
+              </div>
+              <div className="text-sm text-gray-600 space-y-1">
+                <p><strong>Apple Calendar:</strong> File &gt; New Calendar Subscription, paste the URL</p>
+                <p><strong>Google Calendar:</strong> Settings &gt; Add calendar &gt; From URL, paste the URL</p>
+              </div>
+              <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                <p className="text-xs text-gray-500">
+                  Regenerating will break existing subscriptions
+                </p>
+                <button
+                  onClick={async () => {
+                    if (!window.confirm('Regenerate the calendar URL? Existing calendar subscriptions will stop working.')) return;
+                    try {
+                      const res = await api.post('/api/calendar-token/regenerate');
+                      setCalendarToken(res.data.token);
+                      toast.success('Calendar URL regenerated');
+                    } catch (err) {
+                      toast.error('Failed to regenerate URL');
+                    }
+                  }}
+                  className="px-3 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 flex items-center space-x-1"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Regenerate URL</span>
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 

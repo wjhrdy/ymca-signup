@@ -188,6 +188,11 @@ function createTables() {
     db.run(`ALTER TABLE app_settings ADD COLUMN waitlist_limit INTEGER DEFAULT 5`, (err) => {
       // Ignore error if column already exists
     });
+
+    // Migration: Add calendar_token column if it doesn't exist
+    db.run(`ALTER TABLE system_config ADD COLUMN calendar_token TEXT`, (err) => {
+      // Ignore error if column already exists
+    });
     
     db.run(`
       CREATE TABLE IF NOT EXISTS credentials (
@@ -212,6 +217,7 @@ function createTables() {
       CREATE TABLE IF NOT EXISTS system_config (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         session_secret TEXT NOT NULL,
+        calendar_token TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -684,9 +690,31 @@ function getSessionSecret() {
 function saveSessionSecret(secret) {
   return new Promise((resolve, reject) => {
     db.run(
-      `INSERT OR REPLACE INTO system_config (id, session_secret, created_at) 
+      `INSERT OR REPLACE INTO system_config (id, session_secret, created_at)
        VALUES (1, ?, CURRENT_TIMESTAMP)`,
       [secret],
+      (err) => {
+        if (err) reject(err);
+        else resolve();
+      }
+    );
+  });
+}
+
+function getCalendarToken() {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT calendar_token FROM system_config WHERE id = 1', (err, row) => {
+      if (err) reject(err);
+      else resolve(row?.calendar_token || null);
+    });
+  });
+}
+
+function saveCalendarToken(token) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      `UPDATE system_config SET calendar_token = ? WHERE id = 1`,
+      [token],
       (err) => {
         if (err) reject(err);
         else resolve();
@@ -723,5 +751,7 @@ module.exports = {
   getUserByUsername,
   updateUserLogin,
   getSessionSecret,
-  saveSessionSecret
+  saveSessionSecret,
+  getCalendarToken,
+  saveCalendarToken
 };

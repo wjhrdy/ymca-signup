@@ -12,6 +12,7 @@ const authService = require('./services/authService');
 const classService = require('./services/classService');
 const schedulerService = require('./services/schedulerService');
 const userAuthService = require('./services/userAuthService');
+const calendarService = require('./services/calendarService');
 const { requireAuth } = require('./middleware/auth');
 
 const app = express();
@@ -19,6 +20,7 @@ const PORT = process.env.PORT || 3001;
 const NODE_ENV = process.env.NODE_ENV || 'production';
 
 let SESSION_SECRET = null;
+let calendarToken = null;
 
 app.use(cors({
   origin: true,
@@ -52,6 +54,14 @@ async function initializeDatabase() {
         logger.info('✓ Using SESSION_SECRET from environment variable');
       }
       
+      // Load or generate calendar token
+      calendarToken = await db.getCalendarToken();
+      if (!calendarToken) {
+        calendarToken = crypto.randomUUID();
+        await db.saveCalendarToken(calendarToken);
+        logger.info('Generated and saved new calendar subscription token');
+      }
+
       dbReady = true;
       resolve();
     }, 100);
@@ -85,6 +95,44 @@ async function startServer() {
   // Define routes AFTER session middleware is set up
   app.get('/health', (req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // Calendar subscription feed (public, token-authenticated)
+  app.get('/cal/:token.ics', async (req, res) => {
+    try {
+      if (req.params.token !== calendarToken) {
+        return res.status(404).send('Not found');
+      }
+
+      if (!sessionCookie) {
+        try {
+          sessionCookie = await authService.login();
+          await db.saveSession(sessionCookie);
+          logger.info('Session saved to database');
+        } catch (loginErr) {
+          logger.error('Calendar feed: failed to login:', loginErr.message);
+          return res.status(503).send('Service unavailable');
+        }
+      }
+
+      const startDate = new Date().toISOString().split('T')[0];
+      const endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const response = await classService.getMyBookings(sessionCookie, {
+        startDate,
+        endDate
+      });
+
+      const icsContent = calendarService.generateCalendar(response.data || []);
+      res.set('Content-Type', 'text/calendar; charset=utf-8');
+      res.send(icsContent);
+    } catch (error) {
+      logger.error('Calendar feed error:', error.message);
+      if (error.message?.includes('401') || error.response?.status === 401) {
+        sessionCookie = null;
+        await db.clearSession();
+      }
+      res.status(500).send('Internal server error');
+    }
   });
 
   app.get('/api/auth/setup-status', async (req, res) => {
@@ -739,7 +787,23 @@ app.put('/api/credentials', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/class-profiles', requireAuth, async (req, res) => {
+app.get('/api/calendar-token', requireAuth, (req, res) => {
+    res.json({ token: calendarToken });
+  });
+
+  app.post('/api/calendar-token/regenerate', requireAuth, async (req, res) => {
+    try {
+      calendarToken = crypto.randomUUID();
+      await db.saveCalendarToken(calendarToken);
+      logger.info('Calendar token regenerated');
+      res.json({ token: calendarToken });
+    } catch (error) {
+      logger.error('Regenerate calendar token error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/class-profiles', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
       sessionCookie = await authService.login();
