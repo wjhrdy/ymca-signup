@@ -8,7 +8,6 @@ const ical = require('ical-generator').default;
 function generateCalendar(bookings, appUrl) {
   const calendar = ical({
     name: 'YMCA Classes',
-    timezone: 'America/New_York',
     ttl: 30 * 60 // 30 minutes
   });
 
@@ -46,7 +45,6 @@ function generateCalendar(bookings, appUrl) {
       id: `ymca-${booking.id}@ymca-signup`,
       start,
       end,
-      timezone: 'America/New_York',
       summary,
       location,
       description: descriptionParts.join('\n'),
