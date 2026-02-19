@@ -122,7 +122,8 @@ async function startServer() {
         endDate
       });
 
-      const icsContent = calendarService.generateCalendar(response.data || []);
+      const appUrl = `${req.protocol}://${req.get('host')}`;
+      const icsContent = calendarService.generateCalendar(response.data || [], appUrl);
       res.set('Content-Type', 'text/calendar; charset=utf-8');
       res.send(icsContent);
     } catch (error) {

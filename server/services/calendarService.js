@@ -5,7 +5,7 @@ if (typeof globalThis.crypto === 'undefined') {
 
 const ical = require('ical-generator').default;
 
-function generateCalendar(bookings) {
+function generateCalendar(bookings, appUrl) {
   const calendar = ical({
     name: 'YMCA Classes',
     timezone: 'America/New_York',
@@ -36,6 +36,10 @@ function generateCalendar(bookings) {
       }
     } else {
       descriptionParts.push('Status: Booked');
+    }
+
+    if (appUrl) {
+      descriptionParts.push(`\nCancel: ${appUrl}/?cancel=${booking.id}`);
     }
 
     calendar.createEvent({

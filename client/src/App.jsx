@@ -7,6 +7,7 @@ import SignupLogs from './components/SignupLogs';
 import Settings from './components/Settings';
 import Setup from './components/Setup';
 import Login from './components/Login';
+import CancelClass from './components/CancelClass';
 import { Toaster } from 'react-hot-toast';
 import { ConfirmProvider } from './components/ConfirmDialog';
 
@@ -15,6 +16,10 @@ function App() {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [authState, setAuthState] = useState({ loading: true, setupRequired: false, authenticated: false, user: null });
+  const [cancelOccurrenceId, setCancelOccurrenceId] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('cancel') || null;
+  });
 
   useEffect(() => {
     checkAuth();
@@ -114,6 +119,18 @@ function App() {
 
   if (!authState.authenticated) {
     return <Login onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  if (cancelOccurrenceId) {
+    return (
+      <CancelClass
+        occurrenceId={cancelOccurrenceId}
+        onDone={() => {
+          setCancelOccurrenceId(null);
+          window.history.replaceState({}, '', window.location.pathname);
+        }}
+      />
+    );
   }
 
   return (
