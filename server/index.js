@@ -143,6 +143,36 @@ async function startServer() {
           }
         }
 
+        // Also fetch booked/waitlisted classes from the bookings API
+        // The schedule API sometimes omits classes that the bookings API returns
+        try {
+          const bookingsResponse = await classService.getMyBookings(sessionCookie, {
+            startDate: new Date().toISOString()
+          });
+          const rawBookings = bookingsResponse?.data || [];
+          for (const b of rawBookings) {
+            if (!b.is_joined && !b.is_waited) continue;
+            const id = b.id;
+            if (!matchedById.has(id)) {
+              matchedById.set(id, {
+                id,
+                serviceName: b.service_title,
+                startTime: b.occurs_at,
+                duration: b.duration_in_minutes || 60,
+                locationName: b.location_name,
+                subLocationName: b.sub_location_name || null,
+                trainerName: b.trainer_name,
+                isJoined: b.is_joined,
+                isWaited: b.is_waited,
+                positionOnWaitingList: b.position_on_waiting_list,
+              });
+              logger.debug(`Added booked class from bookings API: ${b.service_title} (${id})`);
+            }
+          }
+        } catch (bookingsError) {
+          logger.warn('Failed to fetch bookings for calendar, continuing with tracked matches only:', bookingsError.message);
+        }
+
         // Detect cancelled occurrences from signup logs
         const logs = await db.getSignupLogs(1000);
         const cancelledIds = new Set(
@@ -388,16 +418,18 @@ app.get('/api/tracked-classes', requireAuth, async (req, res) => {
         } else if (tracked.time_tolerance !== undefined && tracked.time_tolerance !== null) {
           const [targetHour, targetMin] = tracked.start_time.split(':').map(Number);
           const targetMinutes = targetHour * 60 + targetMin;
-          const classMinutes = classDate.getHours() * 60 + classDate.getMinutes();
+          const classTimeET = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+          const [clsHour, clsMin] = classTimeET.split(':').map(Number);
+          const classMinutes = clsHour * 60 + clsMin;
           const diff = Math.abs(classMinutes - targetMinutes);
           if (diff > tracked.time_tolerance) return false;
         }
-        
+
         return true;
       });
-      
+
       matchingClasses.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-      
+
       return {
         ...tracked,
         next_occurrence: matchingClasses.length > 0 ? matchingClasses[0].startTime : null
@@ -497,7 +529,9 @@ app.post('/api/tracked-classes/preview', requireAuth, async (req, res) => {
         // Apply time tolerance (can be 0 for exact match or higher for fuzzy match)
         const [targetHour, targetMin] = startTime.split(':').map(Number);
         const targetMinutes = targetHour * 60 + targetMin;
-        const classMinutes = classDate.getHours() * 60 + classDate.getMinutes();
+        const classTimeET = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+        const [clsHour, clsMin] = classTimeET.split(':').map(Number);
+        const classMinutes = clsHour * 60 + clsMin;
         const diff = Math.abs(classMinutes - targetMinutes);
         if (diff > timeTolerance) return false;
       }
