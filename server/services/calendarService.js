@@ -1,5 +1,9 @@
+// ical-generator uses global crypto.randomUUID() which isn't available in Node 18
+if (typeof globalThis.crypto === 'undefined') {
+  globalThis.crypto = require('crypto');
+}
+
 const ical = require('ical-generator').default;
-const logger = require('../logger');
 
 function generateCalendar(bookings) {
   const calendar = ical({
