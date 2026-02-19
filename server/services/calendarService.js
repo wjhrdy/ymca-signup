@@ -46,6 +46,7 @@ function generateCalendar(bookings, appUrl) {
       id: `ymca-${booking.id}@ymca-signup`,
       start,
       end,
+      timezone: 'America/New_York',
       summary,
       location,
       description: descriptionParts.join('\n'),
