@@ -86,6 +86,8 @@ function Setup({ onSetupComplete }) {
                   required
                   autoFocus
                   autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
                 />
               </div>
               <p className="mt-1 text-xs text-gray-500">At least 3 characters</p>

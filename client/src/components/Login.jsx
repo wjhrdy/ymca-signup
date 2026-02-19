@@ -69,6 +69,8 @@ function Login({ onLoginSuccess }) {
                   required
                   autoFocus
                   autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
                 />
               </div>
             </div>
