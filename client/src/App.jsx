@@ -8,6 +8,7 @@ import Settings from './components/Settings';
 import Setup from './components/Setup';
 import Login from './components/Login';
 import CancelClass from './components/CancelClass';
+import BookClass from './components/BookClass';
 import { Toaster } from 'react-hot-toast';
 import { ConfirmProvider } from './components/ConfirmDialog';
 
@@ -19,6 +20,10 @@ function App() {
   const [cancelOccurrenceId, setCancelOccurrenceId] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('cancel') || null;
+  });
+  const [bookOccurrenceId, setBookOccurrenceId] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('book') || null;
   });
 
   useEffect(() => {
@@ -127,6 +132,18 @@ function App() {
         occurrenceId={cancelOccurrenceId}
         onDone={() => {
           setCancelOccurrenceId(null);
+          window.history.replaceState({}, '', window.location.pathname);
+        }}
+      />
+    );
+  }
+
+  if (bookOccurrenceId) {
+    return (
+      <BookClass
+        occurrenceId={bookOccurrenceId}
+        onDone={() => {
+          setBookOccurrenceId(null);
           window.history.replaceState({}, '', window.location.pathname);
         }}
       />

@@ -232,7 +232,9 @@ async function fetchClasses(sessionCookie, filters = {}) {
     logger.debug('Config loaded:', JSON.stringify(appConfig, null, 2));
     logger.debug('Filters provided:', JSON.stringify(filters, null, 2));
     
-    if (filters.locationId) {
+    if (filters.skipLocationFilter) {
+      logger.debug('Skipping location filter (skipLocationFilter=true)');
+    } else if (filters.locationId) {
       logger.debug(`Using explicit locationId filter: ${filters.locationId}`);
       filterObj.filter.push({ by: 'location_id', with: [filters.locationId] });
     } else if (appConfig.preferredLocations && appConfig.preferredLocations.length > 0) {
@@ -1031,6 +1033,51 @@ async function getUserProfile(sessionCookie) {
   }
 }
 
+/**
+ * Match a tracked class record (snake_case DB fields) against an array of
+ * class occurrences from fetchClasses() (camelCase). Returns all matching
+ * occurrences sorted by startTime ascending.
+ */
+function matchTrackedClassToOccurrences(tracked, occurrences) {
+  const matching = occurrences.filter(cls => {
+    if (String(cls.serviceId) !== String(tracked.service_id)) return false;
+
+    // Location: match by locationId if available, fall back to locationName
+    if (tracked.location_id && cls.locationId) {
+      if (String(cls.locationId) !== String(tracked.location_id)) return false;
+    } else if (tracked.location_name && cls.locationName) {
+      if (cls.locationName !== tracked.location_name) return false;
+    }
+
+    // Day of week (in America/New_York timezone)
+    const classDate = new Date(cls.startTime);
+    const classDayOfWeek = classDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
+    if (classDayOfWeek !== tracked.day_of_week) return false;
+
+    // Trainer (conditional on match_trainer)
+    if (tracked.match_trainer === 1 && String(cls.trainerId) !== String(tracked.trainer_id)) return false;
+
+    // Time matching
+    if (tracked.match_exact_time === 1) {
+      const classTime = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+      if (classTime !== tracked.start_time) return false;
+    } else if (tracked.time_tolerance !== undefined && tracked.time_tolerance !== null) {
+      const [targetHour, targetMin] = tracked.start_time.split(':').map(Number);
+      const targetMinutes = targetHour * 60 + targetMin;
+      const classTimeET = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+      const [clsHour, clsMin] = classTimeET.split(':').map(Number);
+      const classMinutes = clsHour * 60 + clsMin;
+      const diff = Math.abs(classMinutes - targetMinutes);
+      if (diff > tracked.time_tolerance) return false;
+    }
+
+    return true;
+  });
+
+  matching.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+  return matching;
+}
+
 module.exports = {
   fetchClasses,
   enrichClassesWithBookingStatus,
@@ -1047,5 +1094,6 @@ module.exports = {
   createClassProfile,
   matchesClassProfile,
   findMatchingClasses,
-  autoBookClass
+  autoBookClass,
+  matchTrackedClassToOccurrences
 };

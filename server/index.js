@@ -21,6 +21,8 @@ const NODE_ENV = process.env.NODE_ENV || 'production';
 
 let SESSION_SECRET = null;
 let calendarToken = null;
+let calendarCache = null;    // { occurrences: [...], generatedAt: Date }
+const CALENDAR_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 app.use(cors({
   origin: true,
@@ -115,15 +117,49 @@ async function startServer() {
         }
       }
 
-      const startDate = new Date().toISOString().split('T')[0];
-      const endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      const response = await classService.getMyBookings(sessionCookie, {
-        startDate,
-        endDate
-      });
+      // Serve from cache if fresh
+      const now = Date.now();
+      if (!calendarCache || (now - calendarCache.generatedAt) > CALENDAR_CACHE_TTL) {
+        // Refresh: fetch tracked classes and all occurrences
+        const trackedClasses = await db.getAllTrackedClasses();
+
+        const startDate = new Date().toISOString().split('T')[0];
+        const endDate = new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        const allOccurrences = await classService.fetchClasses(sessionCookie, {
+          startDate,
+          endDate,
+          skipLocationFilter: true,
+          verifyBookings: false
+        });
+
+        // Match each tracked class to occurrences, dedup by occurrence id
+        const matchedById = new Map();
+        for (const tracked of trackedClasses) {
+          const matches = classService.matchTrackedClassToOccurrences(tracked, allOccurrences);
+          for (const cls of matches) {
+            if (!matchedById.has(cls.id)) {
+              matchedById.set(cls.id, cls);
+            }
+          }
+        }
+
+        // Detect cancelled occurrences from signup logs
+        const logs = await db.getSignupLogs(1000);
+        const cancelledIds = new Set(
+          logs.filter(l => l.status === 'cancelled').map(l => String(l.occurrence_id))
+        );
+
+        const occurrences = Array.from(matchedById.values()).map(cls => ({
+          ...cls,
+          isCancelled: cancelledIds.has(String(cls.id)) && !cls.isJoined && !cls.isWaited
+        }));
+
+        calendarCache = { occurrences, generatedAt: now };
+        logger.debug(`Calendar cache refreshed: ${occurrences.length} occurrences from ${trackedClasses.length} tracked classes`);
+      }
 
       const appUrl = `${req.protocol}://${req.get('host')}`;
-      const icsContent = calendarService.generateCalendar(response.data || [], appUrl);
+      const icsContent = calendarService.generateCalendar(calendarCache.occurrences, appUrl);
       res.set('Content-Type', 'text/calendar; charset=utf-8');
       res.send(icsContent);
     } catch (error) {
@@ -800,6 +836,86 @@ app.get('/api/calendar-token', requireAuth, (req, res) => {
       res.json({ token: calendarToken });
     } catch (error) {
       logger.error('Regenerate calendar token error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/class/:occurrenceId', requireAuth, async (req, res) => {
+    try {
+      if (!sessionCookie) {
+        sessionCookie = await authService.login();
+        await db.saveSession(sessionCookie);
+        logger.info('Session saved to database');
+      }
+
+      const { occurrenceId } = req.params;
+      const details = await classService.getOccurrenceDetails(sessionCookie, occurrenceId);
+
+      if (!details || !details.occurrence) {
+        return res.status(404).json({ error: 'Class not found' });
+      }
+
+      const occurrence = details.occurrence;
+      const appConfig = require('./config').getConfig();
+      const now = new Date();
+      const startTime = occurrence.occurs_at || occurrence.start_time;
+      const classStartTime = new Date(startTime);
+      const duration = occurrence.duration_in_minutes || occurrence.duration || 0;
+      const restrictHours = occurrence.restrict_to_book_in_advance_time_in_hours || 0;
+      const bookingWindowOpen = restrictHours === 0 ||
+        (classStartTime.getTime() - now.getTime()) <= (restrictHours * 60 * 60 * 1000);
+
+      const spotsTotal = occurrence.service_group_size || 0;
+      const attendedCount = occurrence.attended_clients_count || 0;
+      const spotsAvailable = Math.max(0, spotsTotal - attendedCount);
+
+      const canSignup = !occurrence.is_joined &&
+                       !occurrence.full_group &&
+                       bookingWindowOpen &&
+                       now < classStartTime &&
+                       (occurrence.status === 'Scheduled' || occurrence.status === 'Rescheduled');
+
+      const waitlistLimit = appConfig.waitlistLimit ?? 5;
+      const waitlistHasRoom = (occurrence.total_on_waiting_list || 0) < waitlistLimit;
+      const canJoinWaitlist = !occurrence.is_joined &&
+                             !occurrence.is_waited &&
+                             occurrence.full_group &&
+                             occurrence.waiting_list_enabled &&
+                             waitlistHasRoom &&
+                             bookingWindowOpen &&
+                             now < classStartTime &&
+                             (occurrence.status === 'Scheduled' || occurrence.status === 'Rescheduled');
+
+      res.json({
+        id: occurrence.id,
+        serviceId: occurrence.service_id || occurrence.service?.id,
+        serviceName: occurrence.service_title || occurrence.service?.name,
+        trainerId: occurrence.trainer_id || occurrence.trainer?.id,
+        trainerName: occurrence.trainer_name || occurrence.trainer?.name,
+        locationId: occurrence.location_id || occurrence.location?.id,
+        locationName: occurrence.location_name || occurrence.location?.name,
+        startTime,
+        duration,
+        spotsAvailable,
+        spotsTotal,
+        status: occurrence.status,
+        isJoined: occurrence.is_joined,
+        isWaited: occurrence.is_waited,
+        fullGroup: occurrence.full_group,
+        waitingListEnabled: occurrence.waiting_list_enabled,
+        positionOnWaitingList: occurrence.position_on_waiting_list,
+        totalOnWaitingList: occurrence.total_on_waiting_list,
+        canSignup,
+        canJoinWaitlist,
+        lock_version: occurrence.lock_version,
+        restrictToBookInAdvanceHours: restrictHours
+      });
+    } catch (error) {
+      logger.error('Get class details error:', error);
+      if (error.message?.includes('401') || error.response?.status === 401) {
+        sessionCookie = null;
+        await db.clearSession();
+      }
       res.status(500).json({ error: error.message });
     }
   });
