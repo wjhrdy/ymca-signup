@@ -5,6 +5,28 @@ if (typeof globalThis.crypto === 'undefined') {
 
 const ical = require('ical-generator').default;
 
+const LOCATION_ADDRESSES = {
+  'A.E. Finley YMCA': '9216 Baileywick Rd., Raleigh, NC 27615',
+  'Alexander Family YMCA': '1603 Hillsborough St., Raleigh, NC 27605',
+  'Chapel Hill-Carrboro YMCA': '980 Martin Luther King Jr. Blvd., Chapel Hill, NC 27514',
+  'Chatham Park YMCA': '120 Parkland Dr., Pittsboro, NC 27312',
+  'Downtown Durham YMCA': '218 W. Morgan St., Durham, NC 27701',
+  'East Triangle YMCA': '120 Flowers Pkwy, Clayton, NC 27527',
+  'Hope Valley Farms YMCA': '4818 S. Roxboro St., Durham, NC 27713',
+  'Ingram Family YMCA': '1907 K M Wicker Memorial Drive, Sanford, NC 27330',
+  'Kerr Family YMCA': '2500 Wakefield Pines Dr., Raleigh, NC 27614',
+  'Kraft Family YMCA': '8921 Holly Springs Rd., Apex, NC 27539',
+  'Lakewood YMCA': '2119 Chapel Hill Rd., Durham, NC 27707',
+  'Northwest Cary YMCA': '6903 Carpenter Fire Station Road, Cary, NC 27519',
+  'Poole Family YMCA': '2110 Aversboro Road, Garner, NC 27529',
+  'Poyner YMCA': '227 Fayetteville Street, Raleigh, NC 27601',
+  'Southeast Raleigh YMCA': '1436 Rock Quarry Road, Raleigh, NC 27610',
+  'Taylor Family YMCA': '101 YMCA Dr., Cary, NC 27513',
+  'YMCA at American Tobacco': '410 Blackwell Street, Durham, NC 27701',
+  'Knightdale Station YMCA': '494 Knightdale Station Run, Knightdale, NC 27545',
+  'YMCA at Meadowmont': '301 Old Barn Lane, Chapel Hill, NC 27517',
+};
+
 /**
  * Generate an iCal feed from normalized class occurrences.
  *
@@ -49,8 +71,16 @@ function generateCalendar(occurrences, appUrl) {
 
     const summary = `${prefix}${cls.serviceName}`;
 
-    const locationParts = [cls.locationName, cls.subLocationName].filter(Boolean);
-    const location = locationParts.join(' - ');
+    const address = LOCATION_ADDRESSES[cls.locationName];
+    const locationParts = [
+      cls.locationName,
+      cls.subLocationName
+    ].filter(Boolean);
+    // Append address so calendar apps can link to maps
+    if (address) {
+      locationParts.push(address);
+    }
+    const location = locationParts.join(', ');
 
     const descriptionParts = [];
     if (cls.trainerName) descriptionParts.push(`Trainer: ${cls.trainerName}`);
