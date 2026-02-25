@@ -8,6 +8,25 @@ Automatically signs you up for YMCA classes at the right time. You track the cla
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/MMEviu?referralCode=yfSbnH)
 
+## Deploying Railway From a Prebuilt Image (No Railway Build Step)
+
+This repo now publishes Docker images to GHCR from GitHub Actions using:
+
+- Workflow file: `.github/workflows/publish-image.yml`
+- Image: `ghcr.io/wjhrdy/ymca-signup`
+- Tags:
+  - `main` and `latest` on pushes to `main`
+  - `sha-<short-commit>` on each push
+  - `v*` tags when you push a Git tag like `v1.2.3`
+
+To stop Railway from rebuilding this repo on every deploy:
+
+1. In Railway service settings, change **Source** to **Docker Image**
+2. Use image `ghcr.io/wjhrdy/ymca-signup:main` (or a pinned `sha-*`/digest tag)
+3. Optional: enable Railway **Image Auto Updates** for that tag
+
+For template users, set the template service source to the same Docker image so new instances pull the prebuilt image directly.
+
 ## What it does
 
 This app monitors YMCA classes and registers you automatically based on rules you set. Instead of manually checking and signing up at 2am when registration opens, the app does it for you.
