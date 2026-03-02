@@ -6,6 +6,8 @@ RUN apk add --no-cache \
     make \
     g++
 
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
 WORKDIR /app
 
 COPY package*.json ./
