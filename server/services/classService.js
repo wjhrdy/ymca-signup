@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const axios = require('axios');
 const logger = require('../logger');
 const config = require('../config');
@@ -7,14 +8,114 @@ const API_BASE_URL = process.env.API_BASE_URL || 'https://ymca-triangle.fisikal.
 const YMCA_URL = process.env.YMCA_URL || 'https://ymca-triangle.fisikal.com';
 
 let cachedClientId = null;
+let cachedClientIdFingerprint = null;
 let cachedCsrfToken = null;
+let cachedCsrfFingerprint = null;
 const WEB_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-async function getCSRFToken(sessionCookie) {
-  if (cachedCsrfToken) {
+function fingerprintSessionCookie(sessionCookie) {
+  if (!sessionCookie) {
+    return null;
+  }
+
+  return crypto.createHash('sha256').update(sessionCookie).digest('hex');
+}
+
+function invalidateCachedSessionState() {
+  cachedClientId = null;
+  cachedClientIdFingerprint = null;
+  cachedCsrfToken = null;
+  cachedCsrfFingerprint = null;
+}
+
+function getErrorPayload(error) {
+  return error.response?.data;
+}
+
+function formatErrorPayload(error) {
+  const payload = getErrorPayload(error);
+  if (typeof payload === 'string') {
+    return payload;
+  }
+
+  return JSON.stringify(payload, null, 2);
+}
+
+function extractErrorMessage(error) {
+  const payload = getErrorPayload(error);
+  if (typeof payload === 'string') {
+    return payload;
+  }
+
+  return payload?.exception || payload?.error || error.message;
+}
+
+function isUpstreamAuthRejectedResponse(error) {
+  if (error.response?.status !== 422) {
+    return false;
+  }
+
+  const payload = getErrorPayload(error);
+  const payloadText = typeof payload === 'string'
+    ? payload
+    : JSON.stringify(payload || '');
+  const contentType = String(
+    error.response?.headers?.['content-type'] ||
+    error.response?.headers?.['Content-Type'] ||
+    ''
+  );
+
+  return contentType.includes('text/html') ||
+    payloadText.includes('The change you wanted was rejected') ||
+    payloadText.includes('<!DOCTYPE html');
+}
+
+function createUpstreamAuthRejectedError(action, error) {
+  const upstreamError = new Error(`YMCA rejected the ${action} request after session refresh.`);
+  upstreamError.code = 'UPSTREAM_AUTH_REJECTED';
+  upstreamError.status = 502;
+  upstreamError.originalError = getErrorPayload(error) || error.message;
+  return upstreamError;
+}
+
+async function withCsrfRefreshRetry(sessionCookie, action, requestFn) {
+  try {
+    return await requestFn({ forceRefresh: false });
+  } catch (error) {
+    if (!isUpstreamAuthRejectedResponse(error)) {
+      throw error;
+    }
+
+    logger.warn(`Upstream rejected ${action} with HTML 422. Refreshing CSRF token and retrying once...`);
+
+    try {
+      return await requestFn({ forceRefresh: true });
+    } catch (retryError) {
+      if (isUpstreamAuthRejectedResponse(retryError)) {
+        logger.error(`Upstream continued rejecting ${action} after CSRF refresh.`);
+        throw createUpstreamAuthRejectedError(action, retryError);
+      }
+
+      throw retryError;
+    }
+  }
+}
+
+async function getCSRFToken(sessionCookie, options = {}) {
+  const { forceRefresh = false } = options;
+  const sessionFingerprint = fingerprintSessionCookie(sessionCookie);
+
+  if (!forceRefresh && cachedCsrfToken && cachedCsrfFingerprint === sessionFingerprint) {
     return cachedCsrfToken;
   }
-  
+
+  if (!sessionCookie) {
+    return null;
+  }
+
+  cachedCsrfToken = null;
+  cachedCsrfFingerprint = sessionFingerprint;
+
   try {
     const response = await axios.get(YMCA_URL, {
       headers: {
@@ -26,6 +127,7 @@ async function getCSRFToken(sessionCookie) {
     const csrfMatch = response.data.match(/<meta name="csrf-token" content="([^"]+)"/);
     if (csrfMatch) {
       cachedCsrfToken = csrfMatch[1];
+      cachedCsrfFingerprint = sessionFingerprint;
       return cachedCsrfToken;
     }
     return null;
@@ -49,7 +151,9 @@ function buildApiHeaders(sessionCookie, csrfToken, extraHeaders = {}) {
 }
 
 async function getUserClientId(sessionCookie) {
-  if (cachedClientId) {
+  const sessionFingerprint = fingerprintSessionCookie(sessionCookie);
+
+  if (cachedClientId && cachedClientIdFingerprint === sessionFingerprint) {
     return cachedClientId;
   }
   
@@ -58,6 +162,7 @@ async function getUserClientId(sessionCookie) {
     const dbClientId = await db.getClientId();
     if (dbClientId) {
       cachedClientId = dbClientId;
+      cachedClientIdFingerprint = sessionFingerprint;
       logger.info(`Using auto-detected client_id: ${cachedClientId}`);
       return cachedClientId;
     }
@@ -419,12 +524,6 @@ async function getOccurrenceDetails(sessionCookie, occurrenceId) {
 
 async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, tryWaitlist = true, waitingListEnabled = true) {
   try {
-    const csrfToken = await getCSRFToken(sessionCookie);
-    
-    if (!csrfToken) {
-      logger.warn('No CSRF token available, attempting without it...');
-    }
-    
     // Try to get lock_version if not provided, but don't fail if we can't get it
     if (lockVersion === null || lockVersion === undefined) {
       try {
@@ -443,18 +542,30 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
     }
     
     const payload = (lockVersion !== null && lockVersion !== undefined) ? { lock_version: lockVersion } : {};
-    const formData = new URLSearchParams();
-    formData.append('json', JSON.stringify(payload));
+    const response = await withCsrfRefreshRetry(
+      sessionCookie,
+      'signup',
+      async ({ forceRefresh = false } = {}) => {
+        const csrfToken = await getCSRFToken(sessionCookie, { forceRefresh });
 
-    logger.info(`Attempting to join occurrence ${occurrenceId} with payload:`, payload);
+        if (!csrfToken) {
+          logger.warn('No CSRF token available, attempting without it...');
+        }
 
-    const response = await axios.post(
-      `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/join`,
-      formData.toString(),
-      {
-        headers: buildApiHeaders(sessionCookie, csrfToken, {
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-        })
+        const formData = new URLSearchParams();
+        formData.append('json', JSON.stringify(payload));
+
+        logger.info(`Attempting to join occurrence ${occurrenceId} with payload:`, payload);
+
+        return axios.post(
+          `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/join`,
+          formData.toString(),
+          {
+            headers: buildApiHeaders(sessionCookie, csrfToken, {
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+            })
+          }
+        );
       }
     );
 
@@ -462,12 +573,16 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
     logger.debug('Response data:', JSON.stringify(response.data, null, 2));
     return response.data;
   } catch (error) {
-    const errorData = error.response?.data;
-    const errorMessage = errorData?.exception || errorData?.error || error.message;
+    if (error.code === 'UPSTREAM_AUTH_REJECTED') {
+      throw error;
+    }
+
+    const errorData = getErrorPayload(error);
+    const errorMessage = extractErrorMessage(error);
     const status = error.response?.status;
     
     logger.error(`Join request failed with status ${status}:`, errorMessage);
-    logger.error('Full error response:', JSON.stringify(errorData, null, 2));
+    logger.error('Full error response:', formatErrorPayload(error));
     
     // Check if already enrolled
     if (status === 422) {
@@ -505,20 +620,14 @@ async function signupForClass(sessionCookie, occurrenceId, lockVersion = null, t
 }
 
 async function joinWaitlist(sessionCookie, occurrenceId, lockVersion = null) {
-  let csrfToken = null;
-  let baseHeaders = null;
   try {
-    csrfToken = await getCSRFToken(sessionCookie);
-    
-    if (!csrfToken) {
-      logger.warn('No CSRF token available, attempting without it...');
-    }
+    const sendWaitlistRequest = async (payload, forceRefresh = false) => {
+      const csrfToken = await getCSRFToken(sessionCookie, { forceRefresh });
 
-    baseHeaders = buildApiHeaders(sessionCookie, csrfToken, {
-      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-    });
+      if (!csrfToken) {
+        logger.warn('No CSRF token available, attempting without it...');
+      }
 
-    const sendWaitlistRequest = async (payload) => {
       const formData = new URLSearchParams();
       formData.append('json', JSON.stringify(payload));
 
@@ -527,20 +636,34 @@ async function joinWaitlist(sessionCookie, occurrenceId, lockVersion = null) {
       return axios.put(
         `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/wait`,
         formData.toString(),
-        { headers: baseHeaders }
+        {
+          headers: buildApiHeaders(sessionCookie, csrfToken, {
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+          })
+        }
       );
     };
 
-    const initialPayload = {};
+    const initialPayload = (lockVersion !== null && lockVersion !== undefined)
+      ? { lock_version: lockVersion }
+      : {};
 
     // YMCA uses PUT for waitlist, not POST
-    const response = await sendWaitlistRequest(initialPayload);
+    const response = await withCsrfRefreshRetry(
+      sessionCookie,
+      'waitlist join',
+      async ({ forceRefresh = false } = {}) => sendWaitlistRequest(initialPayload, forceRefresh)
+    );
 
     logger.info('✓ Successfully joined waitlist');
     return { ...response.data, waitlisted: true };
   } catch (error) {
-    const errorData = error.response?.data;
-    const errorMessage = errorData?.exception || errorData?.error || error.message;
+    if (error.code === 'UPSTREAM_AUTH_REJECTED') {
+      throw error;
+    }
+
+    const errorData = getErrorPayload(error);
+    const errorMessage = extractErrorMessage(error);
     const status = error.response?.status;
     
     if (status === 404) {
@@ -552,15 +675,7 @@ async function joinWaitlist(sessionCookie, occurrenceId, lockVersion = null) {
       if (lockVersion !== null && lockVersion !== undefined) {
         logger.warn('⚠️  Waitlist request rejected with lock_version, retrying without lock_version');
         try {
-          const retryHeaders = baseHeaders || buildApiHeaders(sessionCookie, csrfToken, {
-            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-          });
-
-          const retryResponse = await axios.put(
-            `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/wait`,
-            'json=%7B%7D',
-            { headers: retryHeaders }
-          );
+          const retryResponse = await sendWaitlistRequest({});
           logger.info('✓ Successfully joined waitlist (retry without lock_version)');
           return { ...retryResponse.data, waitlisted: true };
         } catch (retryError) {
@@ -628,32 +743,42 @@ async function cancelBooking(sessionCookie, occurrenceId) {
     logger.info(`Attempting to cancel occurrence ${occurrenceId}...`);
     logger.debug(`Session cookie: ${sessionCookie.substring(0, 50)}...`);
 
-    const csrfToken = await getCSRFToken(sessionCookie);
-    logger.debug(`CSRF token obtained: ${csrfToken ? csrfToken.substring(0, 20) + '...' : 'NONE'}`);
+    const response = await withCsrfRefreshRetry(
+      sessionCookie,
+      'cancel booking',
+      async ({ forceRefresh = false } = {}) => {
+        const csrfToken = await getCSRFToken(sessionCookie, { forceRefresh });
+        logger.debug(`CSRF token obtained: ${csrfToken ? csrfToken.substring(0, 20) + '...' : 'NONE'}`);
 
-    if (!csrfToken) {
-      throw new Error('Failed to obtain CSRF token. Session may be invalid.');
-    }
+        if (!csrfToken) {
+          throw new Error('Failed to obtain CSRF token. Session may be invalid.');
+        }
 
-    const formData = new URLSearchParams();
-    formData.append('json', JSON.stringify({}));
+        const formData = new URLSearchParams();
+        formData.append('json', JSON.stringify({}));
 
-    logger.debug(`Making DELETE request to: ${API_BASE_URL}/schedule/occurrences/${occurrenceId}/cancel`);
+        logger.debug(`Making DELETE request to: ${API_BASE_URL}/schedule/occurrences/${occurrenceId}/cancel`);
 
-    const response = await axios.delete(
-      `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/cancel`,
-      {
-        headers: buildApiHeaders(sessionCookie, csrfToken, {
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-        }),
-        data: formData.toString()
+        return axios.delete(
+          `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/cancel`,
+          {
+            headers: buildApiHeaders(sessionCookie, csrfToken, {
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+            }),
+            data: formData.toString()
+          }
+        );
       }
     );
 
     logger.info('✓ Successfully cancelled booking');
     return response.data;
   } catch (error) {
-    const errorData = error.response?.data;
+    if (error.code === 'UPSTREAM_AUTH_REJECTED') {
+      throw error;
+    }
+
+    const errorData = getErrorPayload(error);
     const status = error.response?.status;
 
     let errorMessage = 'Failed to cancel booking';
@@ -682,31 +807,41 @@ async function leaveWaitlist(sessionCookie, occurrenceId) {
   try {
     logger.info(`Attempting to leave waitlist for occurrence ${occurrenceId}...`);
 
-    const csrfToken = await getCSRFToken(sessionCookie);
+    const response = await withCsrfRefreshRetry(
+      sessionCookie,
+      'leave waitlist',
+      async ({ forceRefresh = false } = {}) => {
+        const csrfToken = await getCSRFToken(sessionCookie, { forceRefresh });
 
-    if (!csrfToken) {
-      throw new Error('Failed to obtain CSRF token. Session may be invalid.');
-    }
+        if (!csrfToken) {
+          throw new Error('Failed to obtain CSRF token. Session may be invalid.');
+        }
 
-    const formData = new URLSearchParams();
-    formData.append('json', JSON.stringify({}));
+        const formData = new URLSearchParams();
+        formData.append('json', JSON.stringify({}));
 
-    logger.debug(`Making DELETE request to: ${API_BASE_URL}/schedule/occurrences/${occurrenceId}/leave`);
+        logger.debug(`Making DELETE request to: ${API_BASE_URL}/schedule/occurrences/${occurrenceId}/leave`);
 
-    const response = await axios.delete(
-      `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/leave`,
-      {
-        headers: buildApiHeaders(sessionCookie, csrfToken, {
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-        }),
-        data: formData.toString()
+        return axios.delete(
+          `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/leave`,
+          {
+            headers: buildApiHeaders(sessionCookie, csrfToken, {
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+            }),
+            data: formData.toString()
+          }
+        );
       }
     );
 
     logger.info('✓ Successfully left waitlist');
     return response.data;
   } catch (error) {
-    const errorData = error.response?.data;
+    if (error.code === 'UPSTREAM_AUTH_REJECTED') {
+      throw error;
+    }
+
+    const errorData = getErrorPayload(error);
     const status = error.response?.status;
 
     let errorMessage = 'Failed to leave waitlist';
@@ -1083,6 +1218,7 @@ module.exports = {
   enrichClassesWithBookingStatus,
   getUserClientId,
   getUserProfile,
+  getCSRFToken,
   getOccurrenceDetails,
   signupForClass,
   joinWaitlist,
@@ -1095,5 +1231,7 @@ module.exports = {
   matchesClassProfile,
   findMatchingClasses,
   autoBookClass,
-  matchTrackedClassToOccurrences
+  matchTrackedClassToOccurrences,
+  fingerprintSessionCookie,
+  invalidateCachedSessionState
 };

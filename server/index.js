@@ -13,6 +13,7 @@ const classService = require('./services/classService');
 const schedulerService = require('./services/schedulerService');
 const userAuthService = require('./services/userAuthService');
 const calendarService = require('./services/calendarService');
+const { createYmcaSessionManager } = require('./services/ymcaSessionService');
 const { requireAuth } = require('./middleware/auth');
 
 const app = express();
@@ -77,6 +78,33 @@ async function startServer() {
   appConfig.setDatabase(db);
   await appConfig.loadConfig();
   logger.info('Configuration initialization complete');
+
+  const ymcaSessionManager = createYmcaSessionManager({
+    authService,
+    db,
+    classService,
+    logger,
+    getSessionCookie: () => sessionCookie,
+    setSessionCookie: (nextSessionCookie) => {
+      sessionCookie = nextSessionCookie;
+    }
+  });
+
+  const maybeClearYmcaSession = async (error) => {
+    if (error.message?.includes('401') || error.response?.status === 401) {
+      await ymcaSessionManager.clearSession();
+      return true;
+    }
+
+    return false;
+  };
+
+  const respondWithUpstreamAuthRejected = (res) => {
+    return res.status(502).json({
+      error: 'YMCA rejected the signup request after session refresh. Reconnect and retry.',
+      code: 'UPSTREAM_AUTH_REJECTED'
+    });
+  };
   
   // Initialize session middleware after SESSION_SECRET is loaded
   app.use(session({
@@ -108,9 +136,7 @@ async function startServer() {
 
       if (!sessionCookie) {
         try {
-          sessionCookie = await authService.login();
-          await db.saveSession(sessionCookie);
-          logger.info('Session saved to database');
+          await ymcaSessionManager.ensureSession();
         } catch (loginErr) {
           logger.error('Calendar feed: failed to login:', loginErr.message);
           return res.status(503).send('Service unavailable');
@@ -194,10 +220,7 @@ async function startServer() {
       res.send(icsContent);
     } catch (error) {
       logger.error('Calendar feed error:', error.message);
-      if (error.message?.includes('401') || error.response?.status === 401) {
-        sessionCookie = null;
-        await db.clearSession();
-      }
+      await maybeClearYmcaSession(error);
       res.status(500).send('Internal server error');
     }
   });
@@ -310,10 +333,7 @@ async function startServer() {
 
   app.post('/api/auth/login', requireAuth, async (req, res) => {
     try {
-      const cookie = await authService.login();
-      sessionCookie = cookie;
-      await db.saveSession(cookie);
-      logger.info('Session saved to database');
+      await ymcaSessionManager.loginAndPersistSession();
       res.json({ success: true, authenticated: true });
     } catch (error) {
       logger.error('Login error:', error);
@@ -323,11 +343,7 @@ async function startServer() {
 
   app.get('/api/classes', requireAuth, async (req, res) => {
     try {
-    if (!sessionCookie) {
-      sessionCookie = await authService.login();
-      await db.saveSession(sessionCookie);
-      logger.info('Session saved to database');
-    }
+    await ymcaSessionManager.ensureSession();
     
     const { startDate, endDate, locationId, limit, offset } = req.query;
     const classes = await classService.fetchClasses(sessionCookie, { 
@@ -369,11 +385,7 @@ async function startServer() {
     res.json(classes);
   } catch (error) {
     logger.error('Fetch classes error:', error);
-    if (error.message.includes('401') || error.response?.status === 401) {
-      sessionCookie = null;
-      await db.clearSession();
-      logger.info('Session cleared from database');
-    }
+    await maybeClearYmcaSession(error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -383,8 +395,7 @@ app.get('/api/tracked-classes', requireAuth, async (req, res) => {
     const trackedClasses = await db.getAllTrackedClasses();
     
     if (!sessionCookie) {
-      sessionCookie = await authService.login();
-      await db.saveSession(sessionCookie);
+      await ymcaSessionManager.ensureSession();
     }
     
     const startDate = new Date();
@@ -439,10 +450,7 @@ app.get('/api/tracked-classes', requireAuth, async (req, res) => {
     res.json(classesWithNextOccurrence);
   } catch (error) {
     logger.error('Get tracked classes error:', error);
-    if (error.message.includes('401') || error.response?.status === 401) {
-      sessionCookie = null;
-      await db.clearSession();
-    }
+    await maybeClearYmcaSession(error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -450,8 +458,7 @@ app.get('/api/tracked-classes', requireAuth, async (req, res) => {
 app.post('/api/tracked-classes/preview', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
-      sessionCookie = await authService.login();
-      await db.saveSession(sessionCookie);
+      await ymcaSessionManager.ensureSession();
     }
     
     const { 
@@ -547,10 +554,7 @@ app.post('/api/tracked-classes/preview', requireAuth, async (req, res) => {
     res.json({ matchingClasses });
   } catch (error) {
     logger.error('Preview tracked classes error:', error);
-    if (error.message.includes('401') || error.response?.status === 401) {
-      sessionCookie = null;
-      await db.clearSession();
-    }
+    await maybeClearYmcaSession(error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -626,9 +630,7 @@ app.delete('/api/tracked-classes/:id', requireAuth, (req, res) => {
 app.post('/api/signup/:occurrenceId', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
-      sessionCookie = await authService.login();
-      await db.saveSession(sessionCookie);
-      logger.info('Session saved to database');
+      await ymcaSessionManager.ensureSession();
     }
 
     const { occurrenceId } = req.params;
@@ -640,11 +642,10 @@ app.post('/api/signup/:occurrenceId', requireAuth, async (req, res) => {
     res.json({ success: true, result });
   } catch (error) {
     logger.error('Signup error:', error);
-    if (error.message.includes('401') || error.response?.status === 401) {
-      sessionCookie = null;
-      await db.clearSession();
-      logger.info('Session cleared from database');
+    if (error.code === 'UPSTREAM_AUTH_REJECTED') {
+      return respondWithUpstreamAuthRejected(res);
     }
+    await maybeClearYmcaSession(error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -652,9 +653,7 @@ app.post('/api/signup/:occurrenceId', requireAuth, async (req, res) => {
 app.post('/api/waitlist/:occurrenceId', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
-      sessionCookie = await authService.login();
-      await db.saveSession(sessionCookie);
-      logger.info('Session saved to database');
+      await ymcaSessionManager.ensureSession();
     }
 
     const { occurrenceId } = req.params;
@@ -665,11 +664,10 @@ app.post('/api/waitlist/:occurrenceId', requireAuth, async (req, res) => {
     res.json({ success: true, result });
   } catch (error) {
     logger.error('Waitlist join error:', error);
-    if (error.message.includes('401') || error.response?.status === 401) {
-      sessionCookie = null;
-      await db.clearSession();
-      logger.info('Session cleared from database');
+    if (error.code === 'UPSTREAM_AUTH_REJECTED') {
+      return respondWithUpstreamAuthRejected(res);
     }
+    await maybeClearYmcaSession(error);
 
     // Return specific error messages for known error codes
     if (error.code === 'WAITLIST_FULL') {
@@ -689,9 +687,7 @@ app.post('/api/waitlist/:occurrenceId', requireAuth, async (req, res) => {
 app.get('/api/my-bookings', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
-      sessionCookie = await authService.login();
-      await db.saveSession(sessionCookie);
-      logger.info('Session saved to database');
+      await ymcaSessionManager.ensureSession();
     }
     
     const { includeActiveOnly, startDate, endDate, locationId } = req.query;
@@ -706,11 +702,7 @@ app.get('/api/my-bookings', requireAuth, async (req, res) => {
     res.json(bookings);
   } catch (error) {
     logger.error('Get bookings error:', error);
-    if (error.message.includes('401') || error.response?.status === 401) {
-      sessionCookie = null;
-      await db.clearSession();
-      logger.info('Session cleared from database');
-    }
+    await maybeClearYmcaSession(error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -718,9 +710,7 @@ app.get('/api/my-bookings', requireAuth, async (req, res) => {
 app.delete('/api/bookings/:occurrenceId', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
-      sessionCookie = await authService.login();
-      await db.saveSession(sessionCookie);
-      logger.info('Session saved to database');
+      await ymcaSessionManager.ensureSession();
     }
 
     const { occurrenceId } = req.params;
@@ -741,11 +731,10 @@ app.delete('/api/bookings/:occurrenceId', requireAuth, async (req, res) => {
     res.json({ success: true, result });
   } catch (error) {
     logger.error('Cancel booking error:', error);
-    if (error.message.includes('401') || error.response?.status === 401) {
-      sessionCookie = null;
-      await db.clearSession();
-      logger.info('Session cleared from database');
+    if (error.code === 'UPSTREAM_AUTH_REJECTED') {
+      return respondWithUpstreamAuthRejected(res);
     }
+    await maybeClearYmcaSession(error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -753,9 +742,7 @@ app.delete('/api/bookings/:occurrenceId', requireAuth, async (req, res) => {
 app.delete('/api/waitlist/:occurrenceId', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
-      sessionCookie = await authService.login();
-      await db.saveSession(sessionCookie);
-      logger.info('Session saved to database');
+      await ymcaSessionManager.ensureSession();
     }
 
     const { occurrenceId } = req.params;
@@ -776,11 +763,10 @@ app.delete('/api/waitlist/:occurrenceId', requireAuth, async (req, res) => {
     res.json({ success: true, result });
   } catch (error) {
     logger.error('Leave waitlist error:', error);
-    if (error.message.includes('401') || error.response?.status === 401) {
-      sessionCookie = null;
-      await db.clearSession();
-      logger.info('Session cleared from database');
+    if (error.code === 'UPSTREAM_AUTH_REJECTED') {
+      return respondWithUpstreamAuthRejected(res);
     }
+    await maybeClearYmcaSession(error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -847,8 +833,7 @@ app.put('/api/credentials', requireAuth, async (req, res) => {
     
     await db.saveCredentials({ email, password });
     
-    sessionCookie = null;
-    await db.clearSession();
+    await ymcaSessionManager.clearSession();
     
     logger.info('Credentials updated successfully');
     res.json({ success: true });
@@ -877,9 +862,7 @@ app.get('/api/calendar-token', requireAuth, (req, res) => {
   app.get('/api/class/:occurrenceId', requireAuth, async (req, res) => {
     try {
       if (!sessionCookie) {
-        sessionCookie = await authService.login();
-        await db.saveSession(sessionCookie);
-        logger.info('Session saved to database');
+        await ymcaSessionManager.ensureSession();
       }
 
       const { occurrenceId } = req.params;
@@ -946,10 +929,7 @@ app.get('/api/calendar-token', requireAuth, (req, res) => {
       });
     } catch (error) {
       logger.error('Get class details error:', error);
-      if (error.message?.includes('401') || error.response?.status === 401) {
-        sessionCookie = null;
-        await db.clearSession();
-      }
+      await maybeClearYmcaSession(error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -957,9 +937,7 @@ app.get('/api/calendar-token', requireAuth, (req, res) => {
   app.post('/api/class-profiles', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
-      sessionCookie = await authService.login();
-      await db.saveSession(sessionCookie);
-      logger.info('Session saved to database');
+      await ymcaSessionManager.ensureSession();
     }
     
     const { occurrenceId, options } = req.body;
@@ -1014,9 +992,7 @@ app.delete('/api/class-profiles/:id', requireAuth, (req, res) => {
 app.post('/api/auto-book/:profileId', requireAuth, async (req, res) => {
   try {
     if (!sessionCookie) {
-      sessionCookie = await authService.login();
-      await db.saveSession(sessionCookie);
-      logger.info('Session saved to database');
+      await ymcaSessionManager.ensureSession();
     }
     
     const { profileId } = req.params;
@@ -1073,20 +1049,12 @@ app.post('/api/auto-book/:profileId', requireAuth, async (req, res) => {
       }
       
       if (!sessionCookie) {
-        sessionCookie = await authService.login();
-        await db.saveSession(sessionCookie);
-        logger.info('Session saved to database');
+        await ymcaSessionManager.ensureSession();
       }
       await schedulerService.checkAndSignup(sessionCookie);
     } catch (error) {
       logger.error('Scheduler error:', error);
-      if (error.message?.includes('401') || error.response?.status === 401) {
-        sessionCookie = null;
-        await db.clearSession();
-        logger.info('Session cleared from database');
-      } else {
-        sessionCookie = null;
-      }
+      await ymcaSessionManager.clearSession();
     }
   });
 }

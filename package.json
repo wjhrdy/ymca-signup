@@ -9,6 +9,7 @@
     "client": "cd client && npm run dev",
     "build": "cd client && npm run build",
     "start": "node server/index.js",
+    "test": "node --test",
     "install-all": "npm install && cd client && npm install",
     "capture-network": "node scripts/capture-network.js",
     "parse-network": "node scripts/parse-network.js"

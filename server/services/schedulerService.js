@@ -437,6 +437,22 @@ async function checkAndSignup(sessionCookie) {
             });
             continue;
           }
+
+          if (error.code === 'UPSTREAM_AUTH_REJECTED') {
+            const message = 'YMCA rejected signup after CSRF/session refresh';
+            logger.error(`  ✗ Upstream session/authenticity failure for: ${classToSignup.serviceName}`);
+
+            await db.addSignupLog({
+              occurrenceId: classToSignup.id,
+              serviceName: classToSignup.serviceName,
+              trainerName: classToSignup.trainerName,
+              locationName: classToSignup.locationName,
+              classTime: classToSignup.startTime,
+              status: 'failed',
+              errorMessage: message
+            });
+            continue;
+          }
           
           logger.error(`  ✗ Failed to sign up for: ${classToSignup.serviceName}`, error.message);
           
