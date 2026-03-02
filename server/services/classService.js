@@ -325,73 +325,89 @@ async function fetchClasses(sessionCookie, filters = {}) {
     const today = new Date();
     const nextWeek = new Date();
     nextWeek.setDate(nextWeek.getDate() + 7);
-    
-    const filterObj = {
-      filter: [
-        { by: 'status', with: ['Rescheduled', 'Scheduled', 'Reminded', 'Completed', 'Requested', 'Counted', 'Verified'] },
-        { by: 'since', with: filters.startDate || today.toISOString() },
-        { by: 'till', with: filters.endDate || nextWeek.toISOString() }
-      ]
+
+    const requestedServiceIds = (filters.serviceIds || []).map(String);
+    const requestedTrainerIds = (filters.trainerIds || []).map(String);
+
+    const createFilterObject = ({ includeServiceFilter = true, includeTrainerFilter = true } = {}) => {
+      const filterObj = {
+        filter: [
+          { by: 'status', with: ['Rescheduled', 'Scheduled', 'Reminded', 'Completed', 'Requested', 'Counted', 'Verified'] },
+          { by: 'since', with: filters.startDate || today.toISOString() },
+          { by: 'till', with: filters.endDate || nextWeek.toISOString() }
+        ]
+      };
+
+      if (filters.skipLocationFilter) {
+        logger.debug('Skipping location filter (skipLocationFilter=true)');
+      } else if (filters.locationId) {
+        logger.debug(`Using explicit locationId filter: ${filters.locationId}`);
+        filterObj.filter.push({ by: 'location_id', with: [filters.locationId] });
+      } else if (appConfig.preferredLocations && appConfig.preferredLocations.length > 0) {
+        logger.debug(`Applying preferred locations from config: ${appConfig.preferredLocations.join(', ')}`);
+        filterObj.filter.push({ by: 'location_id', with: appConfig.preferredLocations });
+      } else {
+        logger.debug('No location filter applied - fetching from ALL locations');
+      }
+
+      if (includeServiceFilter && requestedServiceIds.length > 0) {
+        logger.debug(`Applying service_id filter: ${requestedServiceIds.join(', ')}`);
+        filterObj.filter.push({ by: 'service_id', with: requestedServiceIds });
+      }
+
+      if (includeTrainerFilter && requestedTrainerIds.length > 0) {
+        logger.debug(`Applying trainer_id filter: ${requestedTrainerIds.join(', ')}`);
+        filterObj.filter.push({ by: 'trainer_id', with: requestedTrainerIds });
+      }
+
+      if (filters.limit && filters.limit > 0) {
+        const start = filters.offset || 0;
+        filterObj.limit = { start: start, count: filters.limit };
+        logger.debug(`Applying pagination: start=${start}, count=${filters.limit}`);
+      }
+
+      filterObj.sorters = {
+        occurs_at: true,
+        location_name: true,
+        service_title: true
+      };
+
+      return filterObj;
     };
-    
+
+    const fetchOccurrences = async (filterObj) => {
+      const jsonParam = encodeURIComponent(JSON.stringify(filterObj));
+      const url = `${API_BASE_URL}/schedule/occurrences?all_service_categories=true&json=${jsonParam}`;
+      const csrfToken = await getCSRFToken(sessionCookie);
+      const headers = buildApiHeaders(sessionCookie, csrfToken);
+
+      logger.debug('Fetching classes...');
+      logger.debug('URL:', url);
+      logger.debug('Cookie:', sessionCookie.substring(0, 50) + '...');
+
+      const response = await axios.get(url, { headers });
+
+      logger.debug('Response status:', response.status);
+      logger.debug('Response data keys:', Object.keys(response.data || {}));
+
+      const occurrences = response.data?.data || response.data?.occurrences || [];
+      logger.debug('Occurrences count:', occurrences.length);
+      return occurrences;
+    };
+
     logger.debug('Config loaded:', JSON.stringify(appConfig, null, 2));
     logger.debug('Filters provided:', JSON.stringify(filters, null, 2));
-    
-    if (filters.skipLocationFilter) {
-      logger.debug('Skipping location filter (skipLocationFilter=true)');
-    } else if (filters.locationId) {
-      logger.debug(`Using explicit locationId filter: ${filters.locationId}`);
-      filterObj.filter.push({ by: 'location_id', with: [filters.locationId] });
-    } else if (appConfig.preferredLocations && appConfig.preferredLocations.length > 0) {
-      logger.debug(`Applying preferred locations from config: ${appConfig.preferredLocations.join(', ')}`);
-      filterObj.filter.push({ by: 'location_id', with: appConfig.preferredLocations });
-    } else {
-      logger.debug('No location filter applied - fetching from ALL locations');
-    }
-    
-    // OPTIMIZATION: Filter by specific service IDs (e.g., from tracked classes)
-    if (filters.serviceIds && filters.serviceIds.length > 0) {
-      logger.debug(`Applying service_id filter: ${filters.serviceIds.join(', ')}`);
-      filterObj.filter.push({ by: 'service_id', with: filters.serviceIds });
-    }
-    
-    // OPTIMIZATION: Filter by specific trainer IDs (optional - some classes don't require specific trainer)
-    if (filters.trainerIds && filters.trainerIds.length > 0) {
-      logger.debug(`Applying trainer_id filter: ${filters.trainerIds.join(', ')}`);
-      filterObj.filter.push({ by: 'trainer_id', with: filters.trainerIds });
-    }
-    
-    // OPTIMIZATION: Add pagination limit if specified
-    if (filters.limit && filters.limit > 0) {
-      const start = filters.offset || 0;
-      filterObj.limit = { start: start, count: filters.limit };
-      logger.debug(`Applying pagination: start=${start}, count=${filters.limit}`);
-    }
-    
-    // Multi-level sorting: occurs_at (primary), location_name (secondary), service_title (tertiary)
-    // Using sorters object for multi-level sorting support
-    filterObj.sorters = {
-      occurs_at: true,        // true = ascending
-      location_name: true,
-      service_title: true
-    };
+    let occurrences = await fetchOccurrences(createFilterObject());
 
-    const jsonParam = encodeURIComponent(JSON.stringify(filterObj));
-    const url = `${API_BASE_URL}/schedule/occurrences?all_service_categories=true&json=${jsonParam}`;
-    const csrfToken = await getCSRFToken(sessionCookie);
-    const headers = buildApiHeaders(sessionCookie, csrfToken);
-    
-    logger.debug('Fetching classes...');
-    logger.debug('URL:', url);
-    logger.debug('Cookie:', sessionCookie.substring(0, 50) + '...');
-
-    const response = await axios.get(url, { headers });
-
-    logger.debug('Response status:', response.status);
-    logger.debug('Response data keys:', Object.keys(response.data || {}));
-    
-    const occurrences = response.data?.data || response.data?.occurrences || [];
-    logger.debug('Occurrences count:', occurrences.length);
+    if (
+      occurrences.length === 0 &&
+      (requestedServiceIds.length > 0 || requestedTrainerIds.length > 0)
+    ) {
+      logger.warn('Optimized schedule query returned 0 classes. Retrying without upstream service/trainer filters and filtering locally.');
+      occurrences = await fetchOccurrences(
+        createFilterObject({ includeServiceFilter: false, includeTrainerFilter: false })
+      );
+    }
 
     if (occurrences.length > 0) {
       logger.debug('Sample occurrence data:', JSON.stringify(occurrences[0], null, 2));
@@ -402,7 +418,7 @@ async function fetchClasses(sessionCookie, filters = {}) {
         logger.debug('Lap Lane occurrence data:', JSON.stringify(lapLanes[0], null, 2));
       }
       
-      const classes = occurrences.map((occurrence, index) => {
+      let classes = occurrences.map((occurrence, index) => {
         try {
           const startTime = occurrence.occurs_at || occurrence.start_time;
           const duration = occurrence.duration_in_minutes || occurrence.duration || 0;
@@ -453,6 +469,7 @@ async function fetchClasses(sessionCookie, filters = {}) {
             trainerName: occurrence.trainer_name || occurrence.trainer?.name,
             locationId: occurrence.location_id || occurrence.location?.id,
             locationName: occurrence.location_name || occurrence.location?.name,
+            subLocationName: occurrence.sub_location_name || occurrence.subLocationName || null,
             startTime,
             endTime,
             duration,
@@ -477,6 +494,14 @@ async function fetchClasses(sessionCookie, filters = {}) {
           return null;
         }
       }).filter(c => c !== null);
+
+      if (requestedServiceIds.length > 0) {
+        classes = classes.filter(cls => requestedServiceIds.includes(String(cls.serviceId)));
+      }
+
+      if (requestedTrainerIds.length > 0) {
+        classes = classes.filter(cls => requestedTrainerIds.includes(String(cls.trainerId)));
+      }
       
       // Filter out readonly services (lap lanes, pool reservations, etc.)
       const filteredClasses = classes.filter(c => !c.isReadonly);
@@ -1168,6 +1193,132 @@ async function getUserProfile(sessionCookie) {
   }
 }
 
+function normalizeComparableText(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  return String(value).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizeTimeString(value) {
+  if (!value) {
+    return null;
+  }
+
+  return String(value).trim().slice(0, 5);
+}
+
+function buildTrackedMatchDiagnostics(tracked, cls, options = {}) {
+  const { ignoreLocation = false } = options;
+  const diagnostics = {
+    serviceId: {
+      tracked: tracked.service_id,
+      actual: cls.serviceId,
+      matches: String(cls.serviceId) === String(tracked.service_id)
+    }
+  };
+
+  if (!diagnostics.serviceId.matches) {
+    return diagnostics;
+  }
+
+  if (tracked.location_id || tracked.location_name) {
+    const trackedLocationName = normalizeComparableText(tracked.location_name);
+    const classLocationName = normalizeComparableText(cls.locationName);
+    const locationNameMatch = trackedLocationName && classLocationName &&
+      trackedLocationName === classLocationName;
+    const locationIdMatch = !trackedLocationName && tracked.location_id && cls.locationId &&
+      String(cls.locationId) === String(tracked.location_id);
+
+    diagnostics.location = {
+      trackedId: tracked.location_id,
+      actualId: cls.locationId,
+      trackedName: tracked.location_name,
+      actualName: cls.locationName,
+      matchSource: locationNameMatch ? 'name' : locationIdMatch ? 'id' : 'none',
+      matches: Boolean(locationIdMatch || locationNameMatch)
+    };
+
+    if (!diagnostics.location.matches && !ignoreLocation) {
+      return diagnostics;
+    }
+  }
+
+  const classDate = new Date(cls.startTime);
+  const classDayOfWeek = classDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
+  diagnostics.dayOfWeek = {
+    tracked: tracked.day_of_week,
+    actual: classDayOfWeek,
+    matches: classDayOfWeek === tracked.day_of_week
+  };
+
+  if (!diagnostics.dayOfWeek.matches) {
+    return diagnostics;
+  }
+
+  if (tracked.match_trainer === 1) {
+    const trackedTrainerName = normalizeComparableText(tracked.trainer_name);
+    const classTrainerName = normalizeComparableText(cls.trainerName);
+    const trainerIdMatch = tracked.trainer_id && cls.trainerId &&
+      String(cls.trainerId) === String(tracked.trainer_id);
+    const trainerNameMatch = trackedTrainerName && classTrainerName &&
+      trackedTrainerName === classTrainerName;
+
+    diagnostics.trainer = {
+      trackedId: tracked.trainer_id,
+      actualId: cls.trainerId,
+      trackedName: tracked.trainer_name,
+      actualName: cls.trainerName,
+      matches: Boolean(trainerIdMatch || trainerNameMatch)
+    };
+
+    if (!diagnostics.trainer.matches) {
+      return diagnostics;
+    }
+  }
+
+  const classTime = normalizeTimeString(
+    classDate.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'America/New_York'
+    })
+  );
+  const trackedTime = normalizeTimeString(tracked.start_time);
+
+  if (tracked.match_exact_time === 1) {
+    diagnostics.time = {
+      mode: 'exact',
+      tracked: trackedTime,
+      actual: classTime,
+      matches: classTime === trackedTime
+    };
+
+    return diagnostics;
+  }
+
+  if (tracked.time_tolerance !== undefined && tracked.time_tolerance !== null && trackedTime && classTime) {
+    const [targetHour, targetMin] = trackedTime.split(':').map(Number);
+    const targetMinutes = targetHour * 60 + targetMin;
+    const [classHour, classMin] = classTime.split(':').map(Number);
+    const classMinutes = classHour * 60 + classMin;
+    const diff = Math.abs(classMinutes - targetMinutes);
+
+    diagnostics.time = {
+      mode: 'tolerance',
+      tracked: trackedTime,
+      actual: classTime,
+      tolerance: tracked.time_tolerance,
+      diff,
+      matches: diff <= tracked.time_tolerance
+    };
+  }
+
+  return diagnostics;
+}
+
 /**
  * Match a tracked class record (snake_case DB fields) against an array of
  * class occurrences from fetchClasses() (camelCase). Returns all matching
@@ -1175,42 +1326,156 @@ async function getUserProfile(sessionCookie) {
  */
 function matchTrackedClassToOccurrences(tracked, occurrences) {
   const matching = occurrences.filter(cls => {
-    if (String(cls.serviceId) !== String(tracked.service_id)) return false;
-
-    // Location: match by locationId if available, fall back to locationName
-    if (tracked.location_id && cls.locationId) {
-      if (String(cls.locationId) !== String(tracked.location_id)) return false;
-    } else if (tracked.location_name && cls.locationName) {
-      if (cls.locationName !== tracked.location_name) return false;
-    }
-
-    // Day of week (in America/New_York timezone)
-    const classDate = new Date(cls.startTime);
-    const classDayOfWeek = classDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
-    if (classDayOfWeek !== tracked.day_of_week) return false;
-
-    // Trainer (conditional on match_trainer)
-    if (tracked.match_trainer === 1 && String(cls.trainerId) !== String(tracked.trainer_id)) return false;
-
-    // Time matching
-    if (tracked.match_exact_time === 1) {
-      const classTime = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
-      if (classTime !== tracked.start_time) return false;
-    } else if (tracked.time_tolerance !== undefined && tracked.time_tolerance !== null) {
-      const [targetHour, targetMin] = tracked.start_time.split(':').map(Number);
-      const targetMinutes = targetHour * 60 + targetMin;
-      const classTimeET = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
-      const [clsHour, clsMin] = classTimeET.split(':').map(Number);
-      const classMinutes = clsHour * 60 + clsMin;
-      const diff = Math.abs(classMinutes - targetMinutes);
-      if (diff > tracked.time_tolerance) return false;
-    }
-
-    return true;
+    const diagnostics = buildTrackedMatchDiagnostics(tracked, cls);
+    return Object.values(diagnostics).every(detail => detail.matches !== false);
   });
 
   matching.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
   return matching;
+}
+
+function buildTrackedClassRefreshUpdates(tracked, cls) {
+  const updates = {};
+
+  if (cls.serviceName && normalizeComparableText(cls.serviceName) !== normalizeComparableText(tracked.service_name)) {
+    updates.service_name = cls.serviceName;
+  }
+
+  if (cls.locationName && normalizeComparableText(cls.locationName) !== normalizeComparableText(tracked.location_name)) {
+    updates.location_name = cls.locationName;
+  }
+
+  const trackedLocationId = tracked.location_id === null || tracked.location_id === undefined
+    ? null
+    : String(tracked.location_id);
+  const classLocationId = cls.locationId === null || cls.locationId === undefined
+    ? null
+    : String(cls.locationId);
+  if (trackedLocationId !== classLocationId) {
+    updates.location_id = classLocationId;
+  }
+
+  if (tracked.match_trainer === 1) {
+    if (cls.trainerName && normalizeComparableText(cls.trainerName) !== normalizeComparableText(tracked.trainer_name)) {
+      updates.trainer_name = cls.trainerName;
+    }
+
+    const trackedTrainerId = tracked.trainer_id === null || tracked.trainer_id === undefined
+      ? null
+      : String(tracked.trainer_id);
+    const classTrainerId = cls.trainerId === null || cls.trainerId === undefined
+      ? null
+      : String(cls.trainerId);
+    if (trackedTrainerId !== classTrainerId) {
+      updates.trainer_id = classTrainerId;
+    }
+  }
+
+  return updates;
+}
+
+function planTrackedClassAutoRefresh(tracked, occurrences) {
+  const refreshableCandidates = occurrences.filter((cls) => {
+    const diagnostics = buildTrackedMatchDiagnostics(tracked, cls, { ignoreLocation: true });
+    return Object.entries(diagnostics).every(([key, detail]) => key === 'location' || detail.matches !== false);
+  });
+
+  if (refreshableCandidates.length === 0) {
+    return null;
+  }
+
+  refreshableCandidates.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+
+  const refreshPlans = new Map();
+
+  for (const candidate of refreshableCandidates) {
+    const updates = buildTrackedClassRefreshUpdates(tracked, candidate);
+    const refreshSignature = JSON.stringify({
+      service_name: updates.service_name ?? tracked.service_name ?? null,
+      location_id: updates.location_id ?? tracked.location_id ?? null,
+      location_name: updates.location_name ?? tracked.location_name ?? null,
+      trainer_id: updates.trainer_id ?? tracked.trainer_id ?? null,
+      trainer_name: updates.trainer_name ?? tracked.trainer_name ?? null
+    });
+
+    if (!refreshPlans.has(refreshSignature)) {
+      refreshPlans.set(refreshSignature, {
+        candidate,
+        updates,
+        candidateCount: 1
+      });
+    } else {
+      refreshPlans.get(refreshSignature).candidateCount += 1;
+    }
+  }
+
+  if (refreshPlans.size !== 1) {
+    return null;
+  }
+
+  const [plan] = refreshPlans.values();
+  if (Object.keys(plan.updates).length === 0) {
+    return null;
+  }
+
+  return {
+    candidate: plan.candidate,
+    updates: plan.updates,
+    candidateCount: refreshableCandidates.length
+  };
+}
+
+function normalizeBookingOccurrence(booking, appConfig = config.getConfig()) {
+  const startTime = booking.occurs_at || booking.start_time;
+  const duration = booking.duration_in_minutes || booking.duration || 0;
+  const waitlistLimit = appConfig.waitlistLimit ?? 5;
+  const now = new Date();
+  const classStartTime = new Date(startTime);
+  const restrictHours = booking.restrict_to_book_in_advance_time_in_hours || 0;
+  const bookingWindowOpen = restrictHours === 0 ||
+    (classStartTime.getTime() - now.getTime()) <= (restrictHours * 60 * 60 * 1000);
+  const waitlistHasRoom = (booking.total_on_waiting_list || 0) < waitlistLimit;
+  const spotsTotal = booking.service_group_size || 0;
+  const attendedCount = booking.attended_clients_count || 0;
+
+  return {
+    id: booking.id,
+    serviceId: booking.service_id || booking.service?.id,
+    serviceName: booking.service_title || booking.service?.name,
+    trainerId: booking.trainer_id || booking.trainer?.id,
+    trainerName: booking.trainer_name || booking.trainer?.name,
+    locationId: booking.location_id || booking.location?.id,
+    locationName: booking.location_name || booking.location?.name,
+    subLocationName: booking.sub_location_name || null,
+    startTime,
+    endTime: duration ? new Date(classStartTime.getTime() + duration * 60000).toISOString() : null,
+    duration,
+    spotsAvailable: Math.max(0, spotsTotal - attendedCount),
+    spotsTotal,
+    status: booking.status,
+    isJoined: booking.is_joined,
+    isWaited: booking.is_waited,
+    isReadonly: booking.is_readonly,
+    fullGroup: booking.full_group,
+    waitingListEnabled: booking.waiting_list_enabled,
+    positionOnWaitingList: booking.position_on_waiting_list,
+    totalOnWaitingList: booking.total_on_waiting_list,
+    canSignup: !booking.is_joined &&
+      !booking.full_group &&
+      bookingWindowOpen &&
+      now < classStartTime &&
+      (booking.status === 'Scheduled' || booking.status === 'Rescheduled'),
+    canJoinWaitlist: !booking.is_joined &&
+      !booking.is_waited &&
+      booking.full_group &&
+      booking.waiting_list_enabled &&
+      waitlistHasRoom &&
+      bookingWindowOpen &&
+      now < classStartTime &&
+      (booking.status === 'Scheduled' || booking.status === 'Rescheduled'),
+    restrictToBookInAdvanceHours: booking.restrict_to_book_in_advance_time_in_hours,
+    lock_version: booking.lock_version
+  };
 }
 
 module.exports = {
@@ -1232,6 +1497,9 @@ module.exports = {
   findMatchingClasses,
   autoBookClass,
   matchTrackedClassToOccurrences,
+  buildTrackedMatchDiagnostics,
+  planTrackedClassAutoRefresh,
+  normalizeBookingOccurrence,
   fingerprintSessionCookie,
   invalidateCachedSessionState
 };

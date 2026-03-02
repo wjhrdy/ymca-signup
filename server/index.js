@@ -13,6 +13,7 @@ const classService = require('./services/classService');
 const schedulerService = require('./services/schedulerService');
 const userAuthService = require('./services/userAuthService');
 const calendarService = require('./services/calendarService');
+const { maybeAutoRefreshTrackedClass } = require('./services/trackedClassAutoRefreshService');
 const { createYmcaSessionManager } = require('./services/ymcaSessionService');
 const { requireAuth } = require('./middleware/auth');
 
@@ -366,20 +367,21 @@ async function startServer() {
     }
     
     const trackedClasses = await db.getAllTrackedClasses();
-    
-    classes.forEach(cls => {
-      const classDate = new Date(cls.startTime);
-      const dayOfWeek = classDate.toLocaleDateString('en-US', { weekday: 'long' });
-      const startTime = classDate.toTimeString().substring(0, 5);
-      
-      const isTracked = trackedClasses.some(tracked => {
-        return tracked.service_id === cls.serviceId &&
-               tracked.location_id === cls.locationId &&
-               tracked.day_of_week === dayOfWeek &&
-               tracked.start_time === startTime;
+    const resolvedTrackedClasses = [];
+
+    for (const tracked of trackedClasses) {
+      const resolvedTracked = await maybeAutoRefreshTrackedClass(tracked, classes, {
+        source: 'browse classes'
       });
-      
-      cls.isTracked = isTracked;
+      resolvedTrackedClasses.push(resolvedTracked.tracked);
+    }
+
+    classes.forEach(cls => {
+      const matchedTracked = resolvedTrackedClasses.find((tracked) =>
+        classService.matchTrackedClassToOccurrences(tracked, [cls]).length > 0
+      );
+      cls.isTracked = Boolean(matchedTracked);
+      cls.trackedClassId = matchedTracked?.id || null;
     });
     
     res.json(classes);
@@ -403,49 +405,20 @@ app.get('/api/tracked-classes', requireAuth, async (req, res) => {
     
     const upcomingClasses = await classService.fetchClasses(sessionCookie, { 
       startDate: startDate.toISOString().split('T')[0], 
-      endDate: endDate.toISOString().split('T')[0],
-      skipLocationFilter: true
+      endDate: endDate.toISOString().split('T')[0]
     });
     
-    const classesWithNextOccurrence = trackedClasses.map(tracked => {
-      const matchingClasses = upcomingClasses.filter(cls => {
-        if (String(cls.serviceId) !== String(tracked.service_id)) return false;
-        
-        if (tracked.location_id && cls.locationId) {
-          if (String(cls.locationId) !== String(tracked.location_id)) return false;
-        } else if (tracked.location_name && cls.locationName) {
-          if (cls.locationName !== tracked.location_name) return false;
-        }
-        
-        const classDate = new Date(cls.startTime);
-        const classDayOfWeek = classDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
-        if (classDayOfWeek !== tracked.day_of_week) return false;
-        
-        if (tracked.match_trainer === 1 && String(cls.trainerId) !== String(tracked.trainer_id)) return false;
-        
-        if (tracked.match_exact_time === 1) {
-          const classTime = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
-          if (classTime !== tracked.start_time) return false;
-        } else if (tracked.time_tolerance !== undefined && tracked.time_tolerance !== null) {
-          const [targetHour, targetMin] = tracked.start_time.split(':').map(Number);
-          const targetMinutes = targetHour * 60 + targetMin;
-          const classTimeET = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
-          const [clsHour, clsMin] = classTimeET.split(':').map(Number);
-          const classMinutes = clsHour * 60 + clsMin;
-          const diff = Math.abs(classMinutes - targetMinutes);
-          if (diff > tracked.time_tolerance) return false;
-        }
-
-        return true;
+    const classesWithNextOccurrence = [];
+    for (const tracked of trackedClasses) {
+      const resolvedTracked = await maybeAutoRefreshTrackedClass(tracked, upcomingClasses, {
+        source: 'tracked classes list'
       });
 
-      matchingClasses.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-
-      return {
-        ...tracked,
-        next_occurrence: matchingClasses.length > 0 ? matchingClasses[0].startTime : null
-      };
-    });
+      classesWithNextOccurrence.push({
+        ...resolvedTracked.tracked,
+        next_occurrence: resolvedTracked.matches.length > 0 ? resolvedTracked.matches[0].startTime : null
+      });
+    }
     
     res.json(classesWithNextOccurrence);
   } catch (error) {
@@ -461,40 +434,31 @@ app.post('/api/tracked-classes/preview', requireAuth, async (req, res) => {
       await ymcaSessionManager.ensureSession();
     }
     
-    const { 
-      serviceId, trainerId, locationId, locationName, dayOfWeek, startTime, 
-      matchTrainer, matchExactTime, timeTolerance 
+    const {
+      trackedClassId, serviceId, trainerId, trainerName, locationId, locationName, dayOfWeek, startTime,
+      matchTrainer, matchExactTime, timeTolerance
     } = req.body;
     
     logger.debug('Preview request params:', {
-      serviceId, trainerId, locationId, locationName, dayOfWeek, startTime,
+      trackedClassId, serviceId, trainerId, trainerName, locationId, locationName, dayOfWeek, startTime,
       matchTrainer, matchExactTime, timeTolerance
     });
     
     const startDate = new Date();
     const endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     
-    // OPTIMIZATION: Use API-level filtering to dramatically reduce payload size
-    // Instead of fetching ALL classes and filtering client-side, we filter by service_id at the API
-    // This reduces the response from potentially 500+ classes to just 5-20 matching occurrences
+    // Preview should mirror Browse's location-scoped month fetch. The upstream
+    // API returns a different occurrence set when the location filter is removed.
     const fetchParams = {
-      startDate: startDate.toISOString().split('T')[0], 
-      endDate: endDate.toISOString().split('T')[0],
-      serviceIds: [serviceId],  // OPTIMIZATION: Only fetch this specific service
-      skipLocationFilter: true   // Keep this to avoid sub-location issues
+      startDate: startDate.toISOString().split('T')[0],
+      endDate: endDate.toISOString().split('T')[0]
     };
     
-    // OPTIMIZATION: If matching specific trainer, add trainer filter to API call
-    if (matchTrainer && trainerId) {
-      fetchParams.trainerIds = [trainerId];
-      logger.debug(`Optimized preview: Filtering by service ${serviceId} and trainer ${trainerId}`);
-    } else {
-      logger.debug(`Optimized preview: Filtering by service ${serviceId} only`);
-    }
+    logger.debug(`Preview fetch: using browse-style month feed with configured location filters; service ${serviceId} matching stays local`);
     
     const classes = await classService.fetchClasses(sessionCookie, fetchParams);
     
-    logger.debug(`Optimized fetch: Retrieved ${classes.length} classes (filtered by service_id at API level)`);
+    logger.debug(`Preview fetch: Retrieved ${classes.length} classes from broad schedule feed`);
     
     if (classes.length > 0) {
       logger.debug('Sample class:', {
@@ -506,52 +470,87 @@ app.post('/api/tracked-classes/preview', requireAuth, async (req, res) => {
         isJoined: classes[0].isJoined
       });
     }
-    
+
+    const currentTrackedClass = trackedClassId ? await db.getTrackedClass(trackedClassId) : null;
+    const trackedLike = currentTrackedClass || {
+      service_id: serviceId,
+      trainer_id: trainerId,
+      trainer_name: trainerName || null,
+      location_id: locationId,
+      location_name: locationName,
+      day_of_week: dayOfWeek,
+      start_time: startTime,
+      match_trainer: matchTrainer ? 1 : 0,
+      match_exact_time: matchExactTime ? 1 : 0,
+      time_tolerance: timeTolerance
+    };
+
+    if (trackedClassId && !currentTrackedClass) {
+      logger.warn(`Preview request referenced missing tracked class ${trackedClassId}; falling back to client payload`);
+    }
+
     // First check: how many classes match just the serviceId
-    const serviceMatches = classes.filter(cls => String(cls.serviceId) === String(serviceId));
-    logger.debug(`Classes matching serviceId ${serviceId}: ${serviceMatches.length}`);
-    
-    const matchingClasses = classes.filter(cls => {
-      // Use loose equality to handle string vs number comparison
-      if (String(cls.serviceId) !== String(serviceId)) return false;
-      
-      // Match by locationId if available, otherwise fall back to locationName
-      if (locationId && cls.locationId) {
-        if (String(cls.locationId) !== String(locationId)) return false;
-      } else if (locationName && cls.locationName) {
-        if (cls.locationName !== locationName) return false;
-      }
-      
-      const classDate = new Date(cls.startTime);
-      const classDayOfWeek = classDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
-      if (classDayOfWeek !== dayOfWeek) return false;
-      
-      if (matchTrainer && String(cls.trainerId) !== String(trainerId)) return false;
-      
-      if (matchExactTime) {
-        const classTime = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
-        logger.debug(`Comparing class time ${classTime} with target ${startTime}`);
-        if (classTime !== startTime) return false;
-      } else if (timeTolerance !== undefined && timeTolerance !== null) {
-        // Apply time tolerance (can be 0 for exact match or higher for fuzzy match)
-        const [targetHour, targetMin] = startTime.split(':').map(Number);
-        const targetMinutes = targetHour * 60 + targetMin;
-        const classTimeET = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
-        const [clsHour, clsMin] = classTimeET.split(':').map(Number);
-        const classMinutes = clsHour * 60 + clsMin;
-        const diff = Math.abs(classMinutes - targetMinutes);
-        if (diff > timeTolerance) return false;
-      }
-      
-      return true;
-    });
+    const serviceMatches = classes.filter(cls => String(cls.serviceId) === String(trackedLike.service_id));
+    logger.debug(`Classes matching serviceId ${trackedLike.service_id}: ${serviceMatches.length}`);
+
+    let resolvedTracked = trackedLike;
+    let matchingClasses = classService.matchTrackedClassToOccurrences(trackedLike, classes);
+    let trackedClassRefreshed = false;
+
+    if (matchingClasses.length === 0 && trackedClassId) {
+      const refreshResult = await maybeAutoRefreshTrackedClass(
+        { id: trackedClassId, ...trackedLike },
+        classes,
+        { source: 'tracked preview' }
+      );
+      resolvedTracked = refreshResult.tracked;
+      matchingClasses = refreshResult.matches;
+      trackedClassRefreshed = refreshResult.refreshed;
+    }
+
+    // Diagnostic only: detect exact booked matches that the schedule API omitted after enrollment.
+    let exactBookedMatches = 0;
+    try {
+      const bookingsResponse = await classService.getMyBookings(sessionCookie, {
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString()
+      });
+      const bookedOccurrences = (bookingsResponse?.data || [])
+        .filter(booking => String(booking.service_id) === String(resolvedTracked.service_id))
+        .map(booking => classService.normalizeBookingOccurrence(booking, appConfig.getConfig()));
+      const exactBookedOccurrences = classService.matchTrackedClassToOccurrences(resolvedTracked, bookedOccurrences);
+      exactBookedMatches = exactBookedOccurrences.length;
+      logger.debug(`Preview diagnostics: Found ${exactBookedMatches} exact booked matches excluded from preview`);
+    } catch (bookingsError) {
+      logger.warn('Preview diagnostics: Failed to fetch bookings, continuing without booked-match diagnostics:', bookingsError.message);
+    }
     
     logger.debug(`Found ${matchingClasses.length} matching classes`);
     if (matchingClasses.length > 0) {
       logger.debug('First matching class:', JSON.stringify(matchingClasses[0], null, 2));
       logger.debug('isJoined status check:', matchingClasses.map(c => ({ id: c.id, isJoined: c.isJoined, canSignup: c.canSignup })));
+    } else if (serviceMatches.length > 0) {
+      logger.debug('Preview mismatch diagnostics:', JSON.stringify(
+        serviceMatches.slice(0, 20).map(cls => ({
+          id: cls.id,
+          serviceName: cls.serviceName,
+          trainerName: cls.trainerName,
+          locationName: cls.locationName,
+          startTime: cls.startTime,
+          diagnostics: classService.buildTrackedMatchDiagnostics(resolvedTracked, cls)
+        })),
+        null,
+        2
+      ));
     }
-    res.json({ matchingClasses });
+    res.json({
+      matchingClasses,
+      trackedClassRefreshed,
+      diagnostics: {
+        serviceMatches: serviceMatches.length,
+        exactBookedMatches
+      }
+    });
   } catch (error) {
     logger.error('Preview tracked classes error:', error);
     await maybeClearYmcaSession(error);
@@ -603,12 +602,12 @@ app.post('/api/tracked-classes', requireAuth, async (req, res) => {
   }
 });
 
-app.put('/api/tracked-classes/:id', requireAuth, (req, res) => {
+app.put('/api/tracked-classes/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { autoSignup, signupHoursBefore } = req.body;
     
-    db.updateTrackedClass(id, { autoSignup, signupHoursBefore });
+    await db.updateTrackedClass(id, { autoSignup, signupHoursBefore });
     res.json({ success: true });
   } catch (error) {
     logger.error('Update tracked class error:', error);
@@ -616,10 +615,10 @@ app.put('/api/tracked-classes/:id', requireAuth, (req, res) => {
   }
 });
 
-app.delete('/api/tracked-classes/:id', requireAuth, (req, res) => {
+app.delete('/api/tracked-classes/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    db.deleteTrackedClass(id);
+    await db.deleteTrackedClass(id);
     res.json({ success: true });
   } catch (error) {
     logger.error('Delete tracked class error:', error);

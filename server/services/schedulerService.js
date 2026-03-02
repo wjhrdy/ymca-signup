@@ -1,6 +1,7 @@
 const logger = require('../logger');
 const classService = require('./classService');
 const db = require('../database');
+const { maybeAutoRefreshTrackedClass } = require('./trackedClassAutoRefreshService');
 
 let cachedClasses = [];
 let lastFetchTime = null;
@@ -127,101 +128,67 @@ async function checkAndSignup(sessionCookie) {
     logger.info(`Checking ${autoSignupClasses.length} auto-signup classes...`);
 
     let allClasses;
+    let broadFallbackClasses = null;
+    let fetchStartDate = now.toISOString();
+    let fetchEndDate = null;
     
     // Only fetch if cache is stale or we're in/near a booking window
     if (cacheStale || inActiveBookingWindow) {
       const endDate = new Date();
       endDate.setDate(endDate.getDate() + 7);
+      fetchEndDate = endDate.toISOString();
       
       // OPTIMIZATION: Extract unique service IDs and trainer IDs from tracked classes
       // This dramatically reduces API payload by only fetching relevant classes
       const serviceIds = [...new Set(autoSignupClasses.map(c => c.service_id).filter(Boolean))];
 
-      // Only apply trainer filter if ALL tracked classes require specific trainers
-      // If ANY class has match_trainer=false (any trainer), we need to fetch all trainers
-      const hasAnyTrainerMatch = autoSignupClasses.some(c => !c.match_trainer || !c.trainer_id);
-      const trainerIds = hasAnyTrainerMatch ? [] : [...new Set(
-        autoSignupClasses
-          .filter(c => c.match_trainer && c.trainer_id)
-          .map(c => c.trainer_id)
-      )];
-
-      logger.debug(`Fetching classes for ${serviceIds.length} services${trainerIds.length > 0 ? ` and ${trainerIds.length} trainers` : ' (all trainers)'}`);
+      logger.debug(`Fetching classes for ${serviceIds.length} services (trainer matching stays local)`);
 
       // Skip enrollment verification during regular checks - only verify when actually attempting signup
       allClasses = await classService.fetchClasses(sessionCookie, {
-        startDate: now.toISOString(),
-        endDate: endDate.toISOString(),
+        startDate: fetchStartDate,
+        endDate: fetchEndDate,
         serviceIds: serviceIds,  // OPTIMIZATION: Only fetch tracked services
-        trainerIds: trainerIds.length > 0 ? trainerIds : undefined,  // Only filter trainers if ALL classes need specific trainers
         verifyBookings: false // Skip expensive enrollment verification call
       });
       
       cachedClasses = allClasses;
       lastFetchTime = now;
-      logger.info(`✅ Optimized fetch: Retrieved ${allClasses.length} classes (filtered by ${serviceIds.length} services${trainerIds.length > 0 ? ` & ${trainerIds.length} trainers` : ''})`);
+      logger.info(`✅ Optimized fetch: Retrieved ${allClasses.length} classes (filtered by ${serviceIds.length} services)`);
     } else {
       allClasses = cachedClasses;
       logger.debug(`Using ${allClasses.length} cached classes`);
     }
 
     for (const tracked of autoSignupClasses) {
-      logger.info(`\n📋 Checking tracked class: ${tracked.service_name}`);
-      logger.debug(`   Service ID: ${tracked.service_id}, Trainer: ${tracked.trainer_name || 'any'}, Location: ${tracked.location_name}`);
-      logger.debug(`   Day: ${tracked.day_of_week}, Time: ${tracked.start_time}`);
-      logger.debug(`   Match settings: trainer=${tracked.match_trainer}, exactTime=${tracked.match_exact_time}, tolerance=${tracked.time_tolerance}min`);
-      
-      const matchingClasses = allClasses.filter(c => {
-        // Use loose equality to handle string vs number comparison
-        const serviceMatch = String(c.serviceId) === String(tracked.service_id);
-        const trainerMatch = !tracked.match_trainer || !tracked.trainer_id || String(c.trainerId) === String(tracked.trainer_id);
-        const locationMatch = !tracked.location_id || String(c.locationId) === String(tracked.location_id);
-        
-        if (!serviceMatch || !trainerMatch || !locationMatch) {
-          return false;
-        }
-
-        if (tracked.day_of_week) {
-          const classDate = new Date(c.startTime);
-          const dayOfWeek = classDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
-          if (dayOfWeek !== tracked.day_of_week) {
-            return false;
-          }
-        }
-
-        if (tracked.start_time) {
-          const classDate = new Date(c.startTime);
-          if (tracked.match_exact_time) {
-            // Exact time match
-            const classTime = classDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
-            if (classTime !== tracked.start_time) {
-              return false;
-            }
-          } else {
-            // Fuzzy time match with tolerance
-            const [targetHour, targetMin] = tracked.start_time.split(':').map(Number);
-            const targetMinutes = targetHour * 60 + targetMin;
-            
-            // Get class time in America/New_York timezone
-            const classTimeStr = classDate.toLocaleTimeString('en-US', { 
-              hour: '2-digit', 
-              minute: '2-digit', 
-              hour12: false, 
-              timeZone: 'America/New_York' 
-            });
-            const [classHour, classMin] = classTimeStr.split(':').map(Number);
-            const classMinutes = classHour * 60 + classMin;
-            
-            const diff = Math.abs(classMinutes - targetMinutes);
-            const tolerance = tracked.time_tolerance || 15;
-            if (diff > tolerance) {
-              return false;
-            }
-          }
-        }
-
-        return true;
+      let resolvedTracked = await maybeAutoRefreshTrackedClass(tracked, allClasses, {
+        source: 'scheduler'
       });
+
+      if (resolvedTracked.matches.length === 0) {
+        if (!broadFallbackClasses) {
+          const fallbackEndDate = fetchEndDate || new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+          logger.warn('Scheduler optimized fetch produced no match for a tracked class; fetching broad fallback schedule');
+          broadFallbackClasses = await classService.fetchClasses(sessionCookie, {
+            startDate: fetchStartDate,
+            endDate: fallbackEndDate,
+            verifyBookings: false
+          });
+        }
+
+        resolvedTracked = await maybeAutoRefreshTrackedClass(tracked, broadFallbackClasses, {
+          source: 'scheduler broad fallback'
+        });
+      }
+
+      const activeTracked = resolvedTracked.tracked;
+
+      logger.info(`\n📋 Checking tracked class: ${activeTracked.service_name}`);
+      logger.debug(`   Service ID: ${activeTracked.service_id}, Trainer: ${activeTracked.trainer_name || 'any'}, Location: ${activeTracked.location_name}`);
+      logger.debug(`   Day: ${activeTracked.day_of_week}, Time: ${activeTracked.start_time}`);
+      logger.debug(`   Match settings: trainer=${activeTracked.match_trainer}, exactTime=${activeTracked.match_exact_time}, tolerance=${activeTracked.time_tolerance}min`);
+      
+      const matchingClasses = resolvedTracked.matches;
 
       for (const classToSignup of matchingClasses) {
         const classTime = new Date(classToSignup.startTime);
@@ -236,7 +203,7 @@ async function checkAndSignup(sessionCookie) {
         logger.debug(`  waitingListEnabled: ${classToSignup.waitingListEnabled}`);
 
         // User preference for when to sign up
-        const userPreferredHours = tracked.signup_hours_before || 46;
+        const userPreferredHours = activeTracked.signup_hours_before || 46;
         
         // YMCA restriction - can't book earlier than this window
         // If 0 or undefined, there's no restriction (can book anytime)

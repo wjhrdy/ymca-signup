@@ -233,6 +233,15 @@ function getAllTrackedClasses() {
   });
 }
 
+function getTrackedClass(id) {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT * FROM tracked_classes WHERE id = ?', [id], (err, row) => {
+      if (err) reject(err);
+      else resolve(row || null);
+    });
+  });
+}
+
 function addTrackedClass(classData) {
   return new Promise((resolve, reject) => {
     if (!db) {
@@ -281,6 +290,46 @@ function updateTrackedClass(id, updates) {
     const fields = [];
     const values = [];
 
+    if (updates.serviceName !== undefined || updates.service_name !== undefined) {
+      fields.push('service_name = ?');
+      values.push(updates.serviceName ?? updates.service_name);
+    }
+    if (updates.trainerId !== undefined || updates.trainer_id !== undefined) {
+      fields.push('trainer_id = ?');
+      values.push(updates.trainerId ?? updates.trainer_id);
+    }
+    if (updates.trainerName !== undefined || updates.trainer_name !== undefined) {
+      fields.push('trainer_name = ?');
+      values.push(updates.trainerName ?? updates.trainer_name);
+    }
+    if (updates.locationId !== undefined || updates.location_id !== undefined) {
+      fields.push('location_id = ?');
+      values.push(updates.locationId ?? updates.location_id);
+    }
+    if (updates.locationName !== undefined || updates.location_name !== undefined) {
+      fields.push('location_name = ?');
+      values.push(updates.locationName ?? updates.location_name);
+    }
+    if (updates.dayOfWeek !== undefined || updates.day_of_week !== undefined) {
+      fields.push('day_of_week = ?');
+      values.push(updates.dayOfWeek ?? updates.day_of_week);
+    }
+    if (updates.startTime !== undefined || updates.start_time !== undefined) {
+      fields.push('start_time = ?');
+      values.push(updates.startTime ?? updates.start_time);
+    }
+    if (updates.matchTrainer !== undefined || updates.match_trainer !== undefined) {
+      fields.push('match_trainer = ?');
+      values.push((updates.matchTrainer ?? updates.match_trainer) ? 1 : 0);
+    }
+    if (updates.matchExactTime !== undefined || updates.match_exact_time !== undefined) {
+      fields.push('match_exact_time = ?');
+      values.push((updates.matchExactTime ?? updates.match_exact_time) ? 1 : 0);
+    }
+    if (updates.timeTolerance !== undefined || updates.time_tolerance !== undefined) {
+      fields.push('time_tolerance = ?');
+      values.push(updates.timeTolerance ?? updates.time_tolerance);
+    }
     if (updates.autoSignup !== undefined) {
       fields.push('auto_signup = ?');
       values.push(updates.autoSignup ? 1 : 0);
@@ -288,6 +337,10 @@ function updateTrackedClass(id, updates) {
     if (updates.signupHoursBefore !== undefined) {
       fields.push('signup_hours_before = ?');
       values.push(updates.signupHoursBefore);
+    }
+
+    if (fields.length === 0) {
+      return resolve();
     }
 
     values.push(id);
@@ -726,6 +779,7 @@ function saveCalendarToken(token) {
 module.exports = {
   initialize,
   getAllTrackedClasses,
+  getTrackedClass,
   addTrackedClass,
   updateTrackedClass,
   deleteTrackedClass,

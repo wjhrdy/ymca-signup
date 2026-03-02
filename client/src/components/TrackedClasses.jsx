@@ -13,6 +13,7 @@ function TrackedClasses() {
   const [editForm, setEditForm] = useState({ autoSignup: false, signupHoursBefore: 46 });
   const [previewingId, setPreviewingId] = useState(null);
   const [previewClasses, setPreviewClasses] = useState([]);
+  const [previewDiagnostics, setPreviewDiagnostics] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [bookingClass, setBookingClass] = useState(null);
 
@@ -87,10 +88,13 @@ function TrackedClasses() {
     setPreviewingId(classItem.id);
     setPreviewLoading(true);
     setPreviewClasses([]);
+    setPreviewDiagnostics(null);
     try {
       const requestData = {
+        trackedClassId: classItem.id,
         serviceId: classItem.service_id,
         trainerId: classItem.trainer_id,
+        trainerName: classItem.trainer_name,
         locationId: classItem.location_id,
         locationName: classItem.location_name,
         dayOfWeek: classItem.day_of_week,
@@ -111,6 +115,11 @@ function TrackedClasses() {
         canSignup: c.canSignup 
       })));
       setPreviewClasses(response.data.matchingClasses || []);
+      setPreviewDiagnostics(response.data.diagnostics || null);
+      if (response.data.trackedClassRefreshed) {
+        fetchTrackedClasses();
+        toast.success('Tracking rule refreshed to match the current schedule');
+      }
     } catch (error) {
       console.error('Failed to preview matches:', error);
       toast.error('Failed to preview matches: ' + (error.response?.data?.error || error.message));
@@ -454,13 +463,14 @@ function TrackedClasses() {
                     Matching Classes
                   </h3>
                   <p className="text-sm text-gray-500 mt-1">
-                    Upcoming classes that match this tracked pattern (next 30 days)
+                    Upcoming classes that match this tracked pattern in the next 30 days, including full and already-booked classes
                   </p>
                 </div>
                 <button
                   onClick={() => {
                     setPreviewingId(null);
                     setPreviewClasses([]);
+                    setPreviewDiagnostics(null);
                   }}
                   className="text-gray-400 hover:text-gray-600"
                 >
@@ -479,12 +489,22 @@ function TrackedClasses() {
                 <div className="text-center py-12">
                   <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-3" />
                   <p className="text-gray-500">No matching classes found</p>
-                  <p className="text-sm text-gray-400 mt-1">
-                    There are no upcoming classes that match this pattern in the next 30 days
-                  </p>
+                  {previewDiagnostics?.exactBookedMatches > 0 ? (
+                    <p className="text-sm text-gray-400 mt-1">
+                      An exact match exists in your bookings, but the schedule response still did not include a previewable occurrence.
+                    </p>
+                  ) : previewDiagnostics?.serviceMatches > 0 ? (
+                    <p className="text-sm text-gray-400 mt-1">
+                      Upcoming classes exist for this service, but none match the saved day, time, location, and instructor filters.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-gray-400 mt-1">
+                      There are no upcoming classes that match this service in the next 30 days
+                    </p>
+                  )}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {previewClasses.map((cls) => {
                     const startTime = new Date(cls.startTime);
                     const endTime = cls.endTime ? new Date(cls.endTime) : null;
@@ -639,7 +659,7 @@ function TrackedClasses() {
                       </div>
                     );
                   })}
-                </div>
+                  </div>
               )}
             </div>
           </div>
