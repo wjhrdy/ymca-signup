@@ -368,12 +368,34 @@ function ClassBrowser({ authenticated, onNavigateToTracked }) {
               onChange={(e) => {
                 const query = e.target.value;
                 setSearchQuery(query);
-                
+
                 // When user starts typing, fetch full month if not already in search mode
                 if (query.trim() && !isSearchMode) {
                   fetchClasses(true);
                 }
                 // When user clears search, reset to normal mode on next refresh
+                if (!query.trim() && isSearchMode) {
+                  setIsSearchMode(false);
+                }
+              }}
+              onInput={(e) => {
+                const query = e.currentTarget.value;
+                setSearchQuery(query);
+
+                if (query.trim() && !isSearchMode) {
+                  fetchClasses(true);
+                }
+                if (!query.trim() && isSearchMode) {
+                  setIsSearchMode(false);
+                }
+              }}
+              onSearch={(e) => {
+                const query = e.currentTarget.value;
+                setSearchQuery(query);
+
+                if (query.trim() && !isSearchMode) {
+                  fetchClasses(true);
+                }
                 if (!query.trim() && isSearchMode) {
                   setIsSearchMode(false);
                 }
