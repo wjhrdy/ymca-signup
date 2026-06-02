@@ -27,6 +27,22 @@ const LOCATION_ADDRESSES = {
   'YMCA at Meadowmont': '301 Old Barn Lane, Chapel Hill, NC 27517',
 };
 
+// Each occurrence carries `cancelWindowMinutes`: the effective (non-refundable)
+// late-cancel window, precomputed server-side from the Fisikal rule + the club's
+// late-cancel flag (server/services/classService.js#effectiveCancelWindowMinutes).
+// A window of 0 means late cancel doesn't apply to that class, so no reminder is
+// emitted. Mirrors client/src/services/lateCancel.js.
+const CANCEL_REMINDER_LEAD_MINUTES = 15;
+
+function formatCancelWindow(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  const parts = [];
+  if (h > 0) parts.push(`${h} hour${h === 1 ? '' : 's'}`);
+  if (m > 0) parts.push(`${m} minute${m === 1 ? '' : 's'}`);
+  return parts.join(' ') || '0 minutes';
+}
+
 /**
  * Generate an iCal feed from normalized class occurrences.
  *
@@ -40,8 +56,13 @@ const LOCATION_ADDRESSES = {
  *   isWaited               → [Waitlist]  TENTATIVE  + cancel link
  *   isCancelled            → [Cancelled] CANCELLED  no cancel link
  *   otherwise              → (no prefix) TENTATIVE  no cancel link
+ *
+ * Booked classes whose occurrence defines a cancellation window also get a
+ * short, free/transparent "[Cancel Deadline]" reminder event ending exactly
+ * when the fee-free cancellation window closes (that window before start),
+ * emitted only while that deadline is still in the future relative to `now`.
  */
-function generateCalendar(occurrences, appUrl) {
+function generateCalendar(occurrences, appUrl, now = new Date()) {
   const calendar = ical({
     name: 'YMCA Classes',
     ttl: 30 * 60 // 30 minutes
@@ -111,6 +132,34 @@ function generateCalendar(occurrences, appUrl) {
       description: descriptionParts.join('\n'),
       status: icalStatus
     });
+
+    // Booked classes: add a short heads-up reminder ending right when the
+    // free-cancel window closes, so the member can drop the class while a refund
+    // is still possible. Skip once that deadline has passed.
+    const windowMinutes = Number(cls.cancelWindowMinutes) || 0;
+    if (cls.isJoined && !cls.isWaited && windowMinutes > 0) {
+      const cancelDeadline = new Date(start.getTime() - windowMinutes * 60 * 1000);
+      if (cancelDeadline.getTime() > now.getTime()) {
+        const reminderStart = new Date(cancelDeadline.getTime() - CANCEL_REMINDER_LEAD_MINUTES * 60 * 1000);
+        const reminderDescription = [
+          `Last chance to cancel "${cls.serviceName}" and still be refunded.`,
+          `This window closes ${formatCancelWindow(windowMinutes)} before the class starts; cancelling after that is a late cancel — you'll be removed from the list but will NOT be refunded.`
+        ];
+        if (appUrl) {
+          reminderDescription.push(`\nCancel: ${appUrl}/?cancel=${cls.id}`);
+        }
+        const reminder = calendar.createEvent({
+          id: `ymca-${cls.id}-cancel-deadline@ymca-signup`,
+          start: reminderStart,
+          end: cancelDeadline,
+          summary: `[Cancel Deadline] ${cls.serviceName}`,
+          description: reminderDescription.join('\n'),
+          status: 'TENTATIVE'
+        });
+        // Don't mark the member busy for a reminder.
+        reminder.transparency('TRANSPARENT');
+      }
+    }
   }
 
   return calendar.toString();

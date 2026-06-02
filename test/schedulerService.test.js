@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');
 
-const schedulerServicePath = '/Users/willy/Developer/ymca-workspace/ymca-signup/server/services/schedulerService.js';
+const schedulerServicePath = require('node:path').join(__dirname, '..', 'server', 'services', 'schedulerService.js');
 
 function loadSchedulerService({ loggerMock, classServiceMock, dbMock, autoRefreshMock }) {
   delete require.cache[require.resolve(schedulerServicePath)];

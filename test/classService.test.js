@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');
 
-const classServicePath = '/Users/willy/Developer/ymca-workspace/ymca-signup/server/services/classService.js';
+const classServicePath = require('node:path').join(__dirname, '..', 'server', 'services', 'classService.js');
 
 function loadClassService({ axiosMock, loggerMock, configMock, dbMock }) {
   delete require.cache[require.resolve(classServicePath)];
@@ -496,4 +496,126 @@ test('planTrackedClassAutoRefresh refuses to refresh when the current schedule p
   const refreshPlan = classService.planTrackedClassAutoRefresh(tracked, occurrences);
 
   assert.equal(refreshPlan, null);
+});
+
+test('lateCancelBooking targets the late_cancel endpoint and retries once after an HTML 422', async () => {
+  let getCalls = 0;
+  let deleteCalls = 0;
+  const deleteUrls = [];
+  const csrfTokens = [];
+  const axiosMock = {
+    get: async () => ({
+      data: `<meta name="csrf-token" content="csrf-${++getCalls}">`
+    }),
+    delete: async (url, options) => {
+      deleteCalls += 1;
+      deleteUrls.push(url);
+      csrfTokens.push(options.headers['X-CSRF-Token']);
+      if (deleteCalls === 1) {
+        throw makeHtml422Error();
+      }
+      return { data: { ok: true } };
+    }
+  };
+
+  const classService = loadClassService({
+    axiosMock,
+    loggerMock: createLoggerMock(),
+    configMock: { getConfig: () => ({ waitlistLimit: 5 }) },
+    dbMock: { getClientId: async () => null }
+  });
+
+  const result = await classService.lateCancelBooking('session-a', 987);
+
+  assert.equal(deleteCalls, 2);
+  assert.deepEqual(csrfTokens, ['csrf-1', 'csrf-2']);
+  assert.ok(deleteUrls.every((url) => url.endsWith('/schedule/occurrences/987/late_cancel')));
+  assert.deepEqual(result, { ok: true });
+});
+
+test('lateCancelBooking surfaces the upstream exception message on a JSON 400', async () => {
+  const axiosMock = {
+    get: async () => ({ data: '<meta name="csrf-token" content="csrf-1">' }),
+    delete: async () => {
+      const error = new Error('Request failed with status code 400');
+      error.response = {
+        status: 400,
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+        data: { exception: 'Too late to cancel' }
+      };
+      throw error;
+    }
+  };
+
+  const classService = loadClassService({
+    axiosMock,
+    loggerMock: createLoggerMock(),
+    configMock: { getConfig: () => ({ waitlistLimit: 5 }) },
+    dbMock: { getClientId: async () => null }
+  });
+
+  await assert.rejects(
+    () => classService.lateCancelBooking('session-a', 987),
+    (err) => {
+      assert.equal(err.status, 400);
+      assert.match(err.message, /Too late to cancel/);
+      return true;
+    }
+  );
+});
+
+test('effectiveCancelWindowMinutes mirrors the Fisikal window rule', () => {
+  const classService = loadClassService({
+    axiosMock: { get: async () => ({ data: '' }) },
+    loggerMock: createLoggerMock(),
+    configMock: { getConfig: () => ({ waitlistLimit: 5 }) },
+    dbMock: { getClientId: async () => null }
+  });
+
+  const club = { enableLateCancelling: true, appointmentBillingTimeHours: 3 };
+
+  // Both fields present -> hours*60 + minutes (0 is "present" -> a real 0 window).
+  assert.equal(classService.effectiveCancelWindowMinutes(2, 0, club), 120);
+  assert.equal(classService.effectiveCancelWindowMinutes(0, 30, club), 30);
+  assert.equal(classService.effectiveCancelWindowMinutes(0, 0, club), 0);
+  // Either field null -> appointment_cancel_time is unset -> club default (3h).
+  assert.equal(classService.effectiveCancelWindowMinutes(0, null, club), 180);
+  assert.equal(classService.effectiveCancelWindowMinutes(null, null, club), 180);
+  // Late cancelling disabled club-wide -> always 0 (feature off everywhere).
+  assert.equal(
+    classService.effectiveCancelWindowMinutes(0, null, { enableLateCancelling: false, appointmentBillingTimeHours: 3 }),
+    0
+  );
+  // Missing club config -> 0 (cannot late cancel).
+  assert.equal(classService.effectiveCancelWindowMinutes(0, 0, null), 0);
+});
+
+test('extractBootstrapConfig pulls club settings out of the SPA bootstrap script', () => {
+  const classService = loadClassService({
+    axiosMock: { get: async () => ({ data: '' }) },
+    loggerMock: createLoggerMock(),
+    configMock: { getConfig: () => ({ waitlistLimit: 5 }) },
+    dbMock: { getClientId: async () => null }
+  });
+
+  const cfg = {
+    time_zone_name: 'US/Eastern',
+    appointment_billing_time: 3,
+    current_club_settings: { enable_late_cancelling: true, booking_minutes_interval: 15 }
+  };
+  // Reproduce the page's embedding: an escaped-JSON string literal argument.
+  const literal = JSON.stringify(JSON.stringify(cfg));
+  const html =
+    '<html><body><script>(function($opal){return $scope.Platform._scope.Components' +
+    '.$component("configuration").$klass().$instance()["$configure!"](' + literal + ');})(Opal);' +
+    '</script></body></html>';
+
+  const parsed = classService.extractBootstrapConfig(html);
+  assert.equal(parsed.appointment_billing_time, 3);
+  assert.equal(parsed.current_club_settings.enable_late_cancelling, true);
+  assert.equal(parsed.time_zone_name, 'US/Eastern');
+
+  // Robust to absence / bad input: returns null instead of throwing.
+  assert.equal(classService.extractBootstrapConfig('<html>no bootstrap here</html>'), null);
+  assert.equal(classService.extractBootstrapConfig(null), null);
 });

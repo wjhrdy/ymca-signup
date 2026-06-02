@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createYmcaSessionManager } = require('/Users/willy/Developer/ymca-workspace/ymca-signup/server/services/ymcaSessionService.js');
+const { createYmcaSessionManager } = require(require('node:path').join(__dirname, '..', 'server', 'services', 'ymcaSessionService.js'));
 
 test('persistSession and clearSession always invalidate cached YMCA session state', async () => {
   let currentSessionCookie = null;

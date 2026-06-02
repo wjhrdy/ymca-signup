@@ -192,6 +192,8 @@ async function startServer() {
                 isJoined: b.is_joined,
                 isWaited: b.is_waited,
                 positionOnWaitingList: b.position_on_waiting_list,
+                appointmentCancelTimeHours: b.appointment_cancel_time_in_hours,
+                appointmentCancelTimeMinutes: b.appointment_cancel_time_in_minutes,
               });
               logger.debug(`Added booked class from bookings API: ${b.service_title} (${id})`);
             }
@@ -206,8 +208,16 @@ async function startServer() {
           logs.filter(l => l.status === 'cancelled').map(l => String(l.occurrence_id))
         );
 
+        // Effective (non-refundable) late-cancel window per occurrence, so the
+        // feed can emit a "cancel by" reminder only where late cancel applies.
+        const calendarClubConfig = await classService.getClubConfiguration(sessionCookie);
         const occurrences = Array.from(matchedById.values()).map(cls => ({
           ...cls,
+          cancelWindowMinutes: classService.effectiveCancelWindowMinutes(
+            cls.appointmentCancelTimeHours,
+            cls.appointmentCancelTimeMinutes,
+            calendarClubConfig
+          ),
           isCancelled: cancelledIds.has(String(cls.id)) && !cls.isJoined && !cls.isWaited
         }));
 
@@ -543,6 +553,17 @@ app.post('/api/tracked-classes/preview', requireAuth, async (req, res) => {
         2
       ));
     }
+    // Annotate matches with their effective (non-refundable) late-cancel window.
+    const previewClubConfig = await classService.getClubConfiguration(sessionCookie);
+    if (previewClubConfig) {
+      for (const cls of matchingClasses) {
+        cls.cancelWindowMinutes = classService.effectiveCancelWindowMinutes(
+          cls.appointmentCancelTimeHours,
+          cls.appointmentCancelTimeMinutes,
+          previewClubConfig
+        );
+      }
+    }
     res.json({
       matchingClasses,
       trackedClassRefreshed,
@@ -698,6 +719,19 @@ app.get('/api/my-bookings', requireAuth, async (req, res) => {
     };
     
     const bookings = await classService.getMyBookings(sessionCookie, filters);
+    // Annotate each booking with its effective free-cancel window (minutes) so
+    // the client knows when a normal cancel becomes a (non-refundable) late
+    // cancel. Mirrors the Fisikal rule, incl. the club's late-cancel flag.
+    const clubConfig = await classService.getClubConfiguration(sessionCookie);
+    if (clubConfig && Array.isArray(bookings?.data)) {
+      for (const booking of bookings.data) {
+        booking.cancelWindowMinutes = classService.effectiveCancelWindowMinutes(
+          booking.appointment_cancel_time_in_hours,
+          booking.appointment_cancel_time_in_minutes,
+          clubConfig
+        );
+      }
+    }
     res.json(bookings);
   } catch (error) {
     logger.error('Get bookings error:', error);
@@ -730,6 +764,38 @@ app.delete('/api/bookings/:occurrenceId', requireAuth, async (req, res) => {
     res.json({ success: true, result });
   } catch (error) {
     logger.error('Cancel booking error:', error);
+    if (error.code === 'UPSTREAM_AUTH_REJECTED') {
+      return respondWithUpstreamAuthRejected(res);
+    }
+    await maybeClearYmcaSession(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/bookings/:occurrenceId/late-cancel', requireAuth, async (req, res) => {
+  try {
+    if (!sessionCookie) {
+      await ymcaSessionManager.ensureSession();
+    }
+
+    const { occurrenceId } = req.params;
+    const result = await classService.lateCancelBooking(sessionCookie, occurrenceId);
+
+    // Log the cancellation so the scheduler knows not to re-book this class
+    await db.addSignupLog({
+      occurrenceId: occurrenceId,
+      serviceName: 'Late cancelled booking',
+      trainerName: null,
+      locationName: null,
+      classTime: null,
+      status: 'cancelled',
+      errorMessage: 'User late cancelled booking'
+    });
+    logger.info(`Logged late cancellation for occurrence ${occurrenceId} to prevent re-booking`);
+
+    res.json({ success: true, result });
+  } catch (error) {
+    logger.error('Late cancel booking error:', error);
     if (error.code === 'UPSTREAM_AUTH_REJECTED') {
       return respondWithUpstreamAuthRejected(res);
     }

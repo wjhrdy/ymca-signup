@@ -11,6 +11,10 @@ let cachedClientId = null;
 let cachedClientIdFingerprint = null;
 let cachedCsrfToken = null;
 let cachedCsrfFingerprint = null;
+let cachedClubConfig = null;
+let cachedClubConfigFingerprint = null;
+let cachedClubConfigAt = 0;
+const CLUB_CONFIG_TTL_MS = 60 * 60 * 1000; // refresh club settings at most hourly
 const WEB_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 function fingerprintSessionCookie(sessionCookie) {
@@ -26,6 +30,9 @@ function invalidateCachedSessionState() {
   cachedClientIdFingerprint = null;
   cachedCsrfToken = null;
   cachedCsrfFingerprint = null;
+  cachedClubConfig = null;
+  cachedClubConfigFingerprint = null;
+  cachedClubConfigAt = 0;
 }
 
 function getErrorPayload(error) {
@@ -133,6 +140,117 @@ async function getCSRFToken(sessionCookie, options = {}) {
     return null;
   } catch (error) {
     logger.warn('Could not fetch CSRF token:', error.message);
+    return null;
+  }
+}
+
+// The Fisikal SPA bootstraps its club configuration into the landing page as an
+// escaped-JSON string argument to Opal's `configuration` component:
+//   ...$component("configuration").$klass().$instance()["$configure!"]("{...}")
+// We scrape that to learn the club-wide cancellation settings that govern late
+// cancel — `enable_late_cancelling` and the default `appointment_billing_time`
+// (hours) — which are not available from any /api/web JSON endpoint.
+function extractBootstrapConfig(html) {
+  if (typeof html !== 'string') {
+    return null;
+  }
+
+  const markers = [
+    '["$configure!"](',
+    '$component("configuration")'
+  ];
+  let openIdx = -1;
+  for (const marker of markers) {
+    const at = html.indexOf(marker);
+    if (at === -1) {
+      continue;
+    }
+    // The argument is the first string literal after the call's "](".
+    const call = html.indexOf('](', at);
+    openIdx = html.indexOf('"', call === -1 ? at + marker.length : call);
+    if (openIdx !== -1) {
+      break;
+    }
+  }
+  if (openIdx === -1) {
+    return null;
+  }
+
+  // Walk to the matching unescaped closing quote of the JS string literal.
+  let i = openIdx + 1;
+  for (; i < html.length; i++) {
+    const ch = html[i];
+    if (ch === '\\') {
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      break;
+    }
+  }
+  if (html[i] !== '"') {
+    return null;
+  }
+
+  const literal = html.slice(openIdx, i + 1); // includes both quotes
+  try {
+    const jsonText = JSON.parse(literal); // decode JS/JSON string literal -> inner JSON text
+    return JSON.parse(jsonText);
+  } catch (error) {
+    return null;
+  }
+}
+
+function normalizeClubConfig(bootstrap) {
+  const settings = (bootstrap && bootstrap.current_club_settings) || {};
+  const billingHours = Number(bootstrap && bootstrap.appointment_billing_time);
+  return {
+    enableLateCancelling: settings.enable_late_cancelling === true,
+    appointmentBillingTimeHours: Number.isFinite(billingHours) ? billingHours : 0,
+    timeZone: (bootstrap && bootstrap.time_zone_name) || null
+  };
+}
+
+async function getClubConfiguration(sessionCookie, { forceRefresh = false } = {}) {
+  const sessionFingerprint = fingerprintSessionCookie(sessionCookie);
+
+  if (
+    !forceRefresh &&
+    cachedClubConfig &&
+    cachedClubConfigFingerprint === sessionFingerprint &&
+    (Date.now() - cachedClubConfigAt) < CLUB_CONFIG_TTL_MS
+  ) {
+    return cachedClubConfig;
+  }
+
+  if (!sessionCookie) {
+    return null;
+  }
+
+  try {
+    const response = await axios.get(YMCA_URL, {
+      headers: {
+        'Cookie': sessionCookie,
+        'User-Agent': WEB_USER_AGENT
+      }
+    });
+
+    const bootstrap = extractBootstrapConfig(response.data);
+    if (!bootstrap) {
+      logger.warn('Could not locate club configuration bootstrap in landing page');
+      return null;
+    }
+
+    cachedClubConfig = normalizeClubConfig(bootstrap);
+    cachedClubConfigFingerprint = sessionFingerprint;
+    cachedClubConfigAt = Date.now();
+    logger.info(
+      `Club config: enable_late_cancelling=${cachedClubConfig.enableLateCancelling}, ` +
+      `appointment_billing_time=${cachedClubConfig.appointmentBillingTimeHours}h`
+    );
+    return cachedClubConfig;
+  } catch (error) {
+    logger.warn('Could not fetch club configuration:', error.message);
     return null;
   }
 }
@@ -486,6 +604,8 @@ async function fetchClasses(sessionCookie, filters = {}) {
             canSignup,
             canJoinWaitlist,
             restrictToBookInAdvanceHours: occurrence.restrict_to_book_in_advance_time_in_hours,
+            appointmentCancelTimeHours: occurrence.appointment_cancel_time_in_hours,
+            appointmentCancelTimeMinutes: occurrence.appointment_cancel_time_in_minutes,
             lock_version: occurrence.lock_version
           };
         } catch (error) {
@@ -818,6 +938,69 @@ async function cancelBooking(sessionCookie, occurrenceId) {
       errorMessage = `Failed to cancel booking: ${JSON.stringify(errorData)}`;
     } else {
       errorMessage = `Failed to cancel booking: ${error.message}`;
+    }
+
+    logger.error(errorMessage);
+    const err = new Error(errorMessage);
+    err.status = status;
+    err.originalError = errorData;
+    throw err;
+  }
+}
+
+async function lateCancelBooking(sessionCookie, occurrenceId) {
+  try {
+    logger.info(`Attempting to late cancel occurrence ${occurrenceId}...`);
+
+    const response = await withCsrfRefreshRetry(
+      sessionCookie,
+      'late cancel booking',
+      async ({ forceRefresh = false } = {}) => {
+        const csrfToken = await getCSRFToken(sessionCookie, { forceRefresh });
+
+        if (!csrfToken) {
+          throw new Error('Failed to obtain CSRF token. Session may be invalid.');
+        }
+
+        const formData = new URLSearchParams();
+        formData.append('json', JSON.stringify({}));
+
+        logger.debug(`Making DELETE request to: ${API_BASE_URL}/schedule/occurrences/${occurrenceId}/late_cancel`);
+
+        return axios.delete(
+          `${API_BASE_URL}/schedule/occurrences/${occurrenceId}/late_cancel`,
+          {
+            headers: buildApiHeaders(sessionCookie, csrfToken, {
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+            }),
+            data: formData.toString()
+          }
+        );
+      }
+    );
+
+    logger.info('✓ Successfully late cancelled booking');
+    return response.data;
+  } catch (error) {
+    if (error.code === 'UPSTREAM_AUTH_REJECTED') {
+      throw error;
+    }
+
+    const errorData = getErrorPayload(error);
+    const status = error.response?.status;
+
+    let errorMessage = 'Failed to late cancel booking';
+
+    if (status === 400 && errorData?.exception) {
+      errorMessage = `Cannot late cancel this class. The YMCA API returned: ${errorData.exception}.`;
+    } else if (status === 404) {
+      errorMessage = 'Class not found or you are not enrolled in this class.';
+    } else if (status === 422) {
+      errorMessage = 'Late cancellation is not available for this class right now.';
+    } else if (errorData) {
+      errorMessage = `Failed to late cancel booking: ${JSON.stringify(errorData)}`;
+    } else {
+      errorMessage = `Failed to late cancel booking: ${error.message}`;
     }
 
     logger.error(errorMessage);
@@ -1474,8 +1657,30 @@ function normalizeBookingOccurrence(booking, appConfig = config.getConfig()) {
       now < classStartTime &&
       (booking.status === 'Scheduled' || booking.status === 'Rescheduled'),
     restrictToBookInAdvanceHours: booking.restrict_to_book_in_advance_time_in_hours,
+    appointmentCancelTimeHours: booking.appointment_cancel_time_in_hours,
+    appointmentCancelTimeMinutes: booking.appointment_cancel_time_in_minutes,
     lock_version: booking.lock_version
   };
+}
+
+// Effective free-cancel window (in minutes) for an occurrence, mirroring the
+// Fisikal client: cancellation_period = appointment_cancel_time || club default
+// `appointment_billing_time`. appointment_cancel_time counts only when BOTH the
+// hours AND minutes fields are present (0 counts as present → a real 0 window);
+// if either is null it is treated as unset and the club default applies.
+// Returns 0 when the club has late cancelling disabled, so callers can treat
+// "window > 0" as "late cancel can apply here".
+function effectiveCancelWindowMinutes(hours, minutes, clubConfig) {
+  if (!clubConfig || clubConfig.enableLateCancelling !== true) {
+    return 0;
+  }
+  if (hours != null && minutes != null) {
+    return (Number(hours) || 0) * 60 + (Number(minutes) || 0);
+  }
+  const billingHours = Number.isFinite(clubConfig.appointmentBillingTimeHours)
+    ? clubConfig.appointmentBillingTimeHours
+    : 0;
+  return billingHours * 60;
 }
 
 module.exports = {
@@ -1490,6 +1695,10 @@ module.exports = {
   leaveWaitlist,
   getMyBookings,
   cancelBooking,
+  lateCancelBooking,
+  effectiveCancelWindowMinutes,
+  getClubConfiguration,
+  extractBootstrapConfig,
   getLocations,
   getServices,
   createClassProfile,

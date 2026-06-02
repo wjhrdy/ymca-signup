@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');
 
-const servicePath = '/Users/willy/Developer/ymca-workspace/ymca-signup/server/services/trackedClassAutoRefreshService.js';
+const servicePath = require('node:path').join(__dirname, '..', 'server', 'services', 'trackedClassAutoRefreshService.js');
 
 function loadService({ dbMock, loggerMock, classServiceMock }) {
   delete require.cache[require.resolve(servicePath)];
