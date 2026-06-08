@@ -55,7 +55,12 @@ function formatCancelWindow(minutes) {
  *   isJoined && !isWaited  → [Booked]   CONFIRMED  + cancel link
  *   isWaited               → [Waitlist]  TENTATIVE  + cancel link
  *   isCancelled            → [Cancelled] CANCELLED  no cancel link
- *   otherwise              → (no prefix) TENTATIVE  no cancel link
+ *   isSkipped              → [Skipped]   TENTATIVE  + unskip/book link
+ *   otherwise              → (no prefix) TENTATIVE  + skip/book link
+ *
+ * `isSkipped` marks a pending (not-yet-booked) occurrence that the member
+ * preemptively excluded from auto-signup via the calendar. The scheduler will
+ * not book it, and the event is relabeled `[Skipped]` with an Unskip link.
  *
  * Booked classes whose occurrence defines a cancellation window also get a
  * short, free/transparent "[Cancel Deadline]" reminder event ending exactly
@@ -76,6 +81,9 @@ function generateCalendar(occurrences, appUrl, now = new Date()) {
     let prefix = '';
     let icalStatus = 'TENTATIVE';
     let showCancelLink = false;
+    let showSkipLink = false;
+    let showUnskipLink = false;
+    let markTransparent = false;
 
     if (cls.isJoined && !cls.isWaited) {
       prefix = '[Booked] ';
@@ -88,6 +96,15 @@ function generateCalendar(occurrences, appUrl, now = new Date()) {
     } else if (cls.isCancelled) {
       prefix = '[Cancelled] ';
       icalStatus = 'CANCELLED';
+    } else if (cls.isSkipped) {
+      // Pending occurrence the member opted out of auto-signup for.
+      prefix = '[Skipped] ';
+      icalStatus = 'TENTATIVE';
+      showUnskipLink = true;
+      markTransparent = true;
+    } else {
+      // Pending occurrence eligible for auto-signup.
+      showSkipLink = true;
     }
 
     const summary = `${prefix}${cls.serviceName}`;
@@ -115,15 +132,25 @@ function generateCalendar(occurrences, appUrl, now = new Date()) {
       }
     } else if (cls.isCancelled) {
       descriptionParts.push('Status: Cancelled');
+    } else if (cls.isSkipped) {
+      descriptionParts.push('Status: Skipped (auto-signup disabled for this class)');
     }
 
-    if (showCancelLink && appUrl) {
-      descriptionParts.push(`\nCancel: ${appUrl}/?cancel=${cls.id}`);
-    } else if (appUrl && (cls.isCancelled || (!cls.isJoined && !cls.isWaited))) {
-      descriptionParts.push(`\nBook: ${appUrl}/?book=${cls.id}`);
+    if (appUrl) {
+      if (showCancelLink) {
+        descriptionParts.push(`\nCancel: ${appUrl}/?cancel=${cls.id}`);
+      } else if (showUnskipLink) {
+        descriptionParts.push(`\nUnskip (re-enable auto-signup): ${appUrl}/?unskip=${cls.id}`);
+        descriptionParts.push(`Book now: ${appUrl}/?book=${cls.id}`);
+      } else if (showSkipLink) {
+        descriptionParts.push(`\nSkip auto-signup: ${appUrl}/?skip=${cls.id}`);
+        descriptionParts.push(`Book now: ${appUrl}/?book=${cls.id}`);
+      } else if (cls.isCancelled) {
+        descriptionParts.push(`\nBook: ${appUrl}/?book=${cls.id}`);
+      }
     }
 
-    calendar.createEvent({
+    const event = calendar.createEvent({
       id: `ymca-${cls.id}@ymca-signup`,
       start,
       end,
@@ -132,6 +159,10 @@ function generateCalendar(occurrences, appUrl, now = new Date()) {
       description: descriptionParts.join('\n'),
       status: icalStatus
     });
+    // A skipped class won't be attended, so don't show the member as busy.
+    if (markTransparent) {
+      event.transparency('TRANSPARENT');
+    }
 
     // Booked classes: add a short heads-up reminder ending right when the
     // free-cancel window closes, so the member can drop the class while a refund

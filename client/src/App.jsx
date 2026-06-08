@@ -9,6 +9,7 @@ import Setup from './components/Setup';
 import Login from './components/Login';
 import CancelClass from './components/CancelClass';
 import BookClass from './components/BookClass';
+import SkipClass from './components/SkipClass';
 import { Toaster } from 'react-hot-toast';
 import { ConfirmProvider } from './components/ConfirmDialog';
 
@@ -24,6 +25,14 @@ function App() {
   const [bookOccurrenceId, setBookOccurrenceId] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('book') || null;
+  });
+  const [skipState, setSkipState] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const skipId = params.get('skip');
+    const unskipId = params.get('unskip');
+    if (skipId) return { occurrenceId: skipId, mode: 'skip' };
+    if (unskipId) return { occurrenceId: unskipId, mode: 'unskip' };
+    return null;
   });
 
   useEffect(() => {
@@ -144,6 +153,19 @@ function App() {
         occurrenceId={bookOccurrenceId}
         onDone={() => {
           setBookOccurrenceId(null);
+          window.history.replaceState({}, '', window.location.pathname);
+        }}
+      />
+    );
+  }
+
+  if (skipState) {
+    return (
+      <SkipClass
+        occurrenceId={skipState.occurrenceId}
+        mode={skipState.mode}
+        onDone={() => {
+          setSkipState(null);
           window.history.replaceState({}, '', window.location.pathname);
         }}
       />

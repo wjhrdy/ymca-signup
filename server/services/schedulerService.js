@@ -74,7 +74,13 @@ async function checkAndSignup(sessionCookie) {
     }
 
     const now = new Date();
-    
+
+    // Occurrences the user preemptively skipped from the calendar feed. The
+    // scheduler must never auto-book these, even once their window opens.
+    const skippedOccurrenceIds = new Set(
+      (await db.getSkippedOccurrences()).map(s => String(s.occurrence_id))
+    );
+
     // Calculate if we need to fetch: check if any booking window is within 15 minutes
     let needsFetch = false;
     let inActiveBookingWindow = false;
@@ -282,6 +288,12 @@ async function checkAndSignup(sessionCookie) {
 
         if (cancelledSignup) {
           logger.debug(`  ⏭️  Skipping: User cancelled this occurrence`);
+          continue;
+        }
+
+        // Skip if user preemptively skipped this occurrence from the calendar
+        if (skippedOccurrenceIds.has(String(classToSignup.id))) {
+          logger.debug(`  ⏭️  Skipping: User skipped auto-signup for this occurrence`);
           continue;
         }
 

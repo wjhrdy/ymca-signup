@@ -118,6 +118,7 @@ test('scheduler fallback fetch keeps location filtering enabled while broadening
   const dbMock = {
     getAllTrackedClasses: async () => [tracked],
     getSignupLogs: async () => [],
+    getSkippedOccurrences: async () => [],
     addSignupLog: async () => {}
   };
 

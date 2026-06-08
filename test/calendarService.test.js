@@ -127,3 +127,54 @@ test('waitlisted (not booked) classes do not get a cancel-deadline reminder', ()
   assert.ok(!ics.includes('ymca-3-cancel-deadline@ymca-signup'));
   assert.equal(countOccurrences(ics, '[Cancel Deadline]'), 0);
 });
+
+test('pending (tracked, not booked) class gets skip + book links', () => {
+  const ics = calendarService.generateCalendar(
+    [
+      {
+        id: 10,
+        serviceName: 'Spin',
+        startTime: '2026-06-10T12:00:00Z',
+        duration: 60,
+        isJoined: false,
+        isWaited: false,
+        isCancelled: false,
+        isSkipped: false
+      }
+    ],
+    'https://app.example.com',
+    NOW
+  );
+
+  assert.ok(ics.includes('SUMMARY:Spin'));
+  assert.ok(!ics.includes('[Skipped]'));
+  // ical-generator escapes the URL line; assert on the path fragment.
+  assert.ok(ics.includes('skip=10'));
+  assert.ok(ics.includes('book=10'));
+});
+
+test('skipped class is relabeled [Skipped], transparent, and offers an unskip link', () => {
+  const ics = calendarService.generateCalendar(
+    [
+      {
+        id: 11,
+        serviceName: 'Spin',
+        startTime: '2026-06-10T12:00:00Z',
+        duration: 60,
+        isJoined: false,
+        isWaited: false,
+        isCancelled: false,
+        isSkipped: true
+      }
+    ],
+    'https://app.example.com',
+    NOW
+  );
+
+  assert.ok(ics.includes('SUMMARY:[Skipped] Spin'));
+  assert.ok(ics.includes('TRANSP:TRANSPARENT'));
+  assert.ok(ics.includes('unskip=11'));
+  // A skipped event should not advertise the plain "skip again" link
+  // (?unskip=11 legitimately contains the substring skip=11, so anchor on ?skip=).
+  assert.ok(!ics.includes('?skip=11'));
+});

@@ -208,6 +208,11 @@ async function startServer() {
           logs.filter(l => l.status === 'cancelled').map(l => String(l.occurrence_id))
         );
 
+        // Occurrences the member preemptively skipped from the calendar feed.
+        const skippedIds = new Set(
+          (await db.getSkippedOccurrences()).map(s => String(s.occurrence_id))
+        );
+
         // Effective (non-refundable) late-cancel window per occurrence, so the
         // feed can emit a "cancel by" reminder only where late cancel applies.
         const calendarClubConfig = await classService.getClubConfiguration(sessionCookie);
@@ -218,7 +223,8 @@ async function startServer() {
             cls.appointmentCancelTimeMinutes,
             calendarClubConfig
           ),
-          isCancelled: cancelledIds.has(String(cls.id)) && !cls.isJoined && !cls.isWaited
+          isCancelled: cancelledIds.has(String(cls.id)) && !cls.isJoined && !cls.isWaited,
+          isSkipped: skippedIds.has(String(cls.id)) && !cls.isJoined && !cls.isWaited
         }));
 
         calendarCache = { occurrences, generatedAt: now };
@@ -836,6 +842,36 @@ app.delete('/api/waitlist/:occurrenceId', requireAuth, async (req, res) => {
   }
 });
 
+// Preemptively skip auto-signup for a single occurrence (from the calendar feed).
+// Local-only: records the skip so the scheduler won't book this occurrence.
+app.post('/api/skip/:occurrenceId', requireAuth, async (req, res) => {
+  try {
+    const { occurrenceId } = req.params;
+    const { serviceName = null, classTime = null } = req.body || {};
+    await db.addSkippedOccurrence({ occurrenceId, serviceName, classTime });
+    calendarCache = null; // force calendar feed to reflect the new state
+    logger.info(`Skipped auto-signup for occurrence ${occurrenceId}`);
+    res.json({ success: true, occurrenceId: String(occurrenceId), skipped: true });
+  } catch (error) {
+    logger.error('Skip occurrence error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Undo a skip, re-enabling auto-signup for the occurrence.
+app.delete('/api/skip/:occurrenceId', requireAuth, async (req, res) => {
+  try {
+    const { occurrenceId } = req.params;
+    await db.removeSkippedOccurrence(occurrenceId);
+    calendarCache = null; // force calendar feed to reflect the new state
+    logger.info(`Unskipped (re-enabled auto-signup for) occurrence ${occurrenceId}`);
+    res.json({ success: true, occurrenceId: String(occurrenceId), skipped: false });
+  } catch (error) {
+    logger.error('Unskip occurrence error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/signup-logs', requireAuth, (req, res) => {
   try {
     const logs = db.getSignupLogs(50);
@@ -938,6 +974,7 @@ app.get('/api/calendar-token', requireAuth, (req, res) => {
       }
 
       const occurrence = details.occurrence;
+      const isSkipped = await db.isOccurrenceSkipped(occurrenceId);
       const appConfig = require('./config').getConfig();
       const now = new Date();
       const startTime = occurrence.occurs_at || occurrence.start_time;
@@ -989,6 +1026,7 @@ app.get('/api/calendar-token', requireAuth, (req, res) => {
         totalOnWaitingList: occurrence.total_on_waiting_list,
         canSignup,
         canJoinWaitlist,
+        isSkipped,
         lock_version: occurrence.lock_version,
         restrictToBookInAdvanceHours: restrictHours
       });

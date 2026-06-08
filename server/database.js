@@ -133,6 +133,15 @@ function createTables() {
     `);
 
     db.run(`
+      CREATE TABLE IF NOT EXISTS skipped_occurrences (
+        occurrence_id TEXT PRIMARY KEY,
+        service_name TEXT,
+        class_time DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    db.run(`
       CREATE TABLE IF NOT EXISTS class_profiles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         service_id TEXT NOT NULL,
@@ -396,6 +405,62 @@ function getSignupLogs(limit = 50) {
       (err, rows) => {
         if (err) reject(err);
         else resolve(rows);
+      }
+    );
+  });
+}
+
+function addSkippedOccurrence({ occurrenceId, serviceName = null, classTime = null }) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      `INSERT INTO skipped_occurrences (occurrence_id, service_name, class_time)
+       VALUES (?, ?, ?)
+       ON CONFLICT(occurrence_id) DO UPDATE SET
+         service_name = COALESCE(excluded.service_name, skipped_occurrences.service_name),
+         class_time = COALESCE(excluded.class_time, skipped_occurrences.class_time)`,
+      [String(occurrenceId), serviceName, classTime],
+      function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      }
+    );
+  });
+}
+
+function removeSkippedOccurrence(occurrenceId) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      'DELETE FROM skipped_occurrences WHERE occurrence_id = ?',
+      [String(occurrenceId)],
+      function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      }
+    );
+  });
+}
+
+function getSkippedOccurrences() {
+  return new Promise((resolve, reject) => {
+    db.all(
+      'SELECT * FROM skipped_occurrences ORDER BY created_at DESC',
+      [],
+      (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      }
+    );
+  });
+}
+
+function isOccurrenceSkipped(occurrenceId) {
+  return new Promise((resolve, reject) => {
+    db.get(
+      'SELECT 1 FROM skipped_occurrences WHERE occurrence_id = ?',
+      [String(occurrenceId)],
+      (err, row) => {
+        if (err) reject(err);
+        else resolve(!!row);
       }
     );
   });
@@ -785,6 +850,10 @@ module.exports = {
   deleteTrackedClass,
   addSignupLog,
   getSignupLogs,
+  addSkippedOccurrence,
+  removeSkippedOccurrence,
+  getSkippedOccurrences,
+  isOccurrenceSkipped,
   addClassProfile,
   getAllClassProfiles,
   getClassProfile,

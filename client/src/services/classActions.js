@@ -56,10 +56,33 @@ export async function leaveWaitlist(occurrenceId) {
   return response.data;
 }
 
+/**
+ * Preemptively skip auto-signup for an occurrence (won't be auto-booked).
+ * @param {number|string} occurrenceId - The class occurrence ID
+ * @param {{serviceName?: string, classTime?: string}} [meta] - Optional display metadata
+ * @returns {Promise<Object>} API response data
+ */
+export async function skipOccurrence(occurrenceId, meta = {}) {
+  const response = await api.post(`/api/skip/${occurrenceId}`, meta);
+  return response.data;
+}
+
+/**
+ * Undo a skip, re-enabling auto-signup for an occurrence.
+ * @param {number|string} occurrenceId - The class occurrence ID
+ * @returns {Promise<Object>} API response data
+ */
+export async function unskipOccurrence(occurrenceId) {
+  const response = await api.delete(`/api/skip/${occurrenceId}`);
+  return response.data;
+}
+
 export default {
   signupForClass,
   joinWaitlist,
   cancelBooking,
   lateCancelBooking,
   leaveWaitlist,
+  skipOccurrence,
+  unskipOccurrence,
 };
